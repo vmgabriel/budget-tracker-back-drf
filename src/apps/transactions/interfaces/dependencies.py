@@ -9,10 +9,10 @@ from apps.transactions.application.use_cases import (
     ListUserTransactions,
     UpdateTransaction,
 )
-from apps.transactions.infrastructure.clock import SystemClock
 from apps.transactions.infrastructure.persistence.repositories import (
     DjangoTransactionRepository,
 )
+from shared.infrastructure.clock import SystemClock
 
 
 @dataclass(frozen=True, slots=True)

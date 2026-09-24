@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 from apps.users.application.dto import UserDetails, user_details
 from apps.users.application.exceptions import InvalidUserInput
-from apps.users.application.ports.clock import Clock
 from apps.users.application.ports.repositories import UserRepository
 from apps.users.application.ports.security import PasswordHasher
 from apps.users.domain.entities import User
 from apps.users.domain.exceptions import EmailAlreadyExists
 from apps.users.domain.value_objects import Email, FullName, PasswordHash
+from shared.domain.ports.clock import Clock
 
 
 @dataclass(frozen=True, slots=True)

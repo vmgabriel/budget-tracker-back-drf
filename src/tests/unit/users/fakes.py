@@ -1,6 +1,6 @@
 """In-memory test doubles for user application ports."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from apps.users.domain.entities import User
@@ -54,6 +54,9 @@ class FakePasswordHasher:
 class FakeClock:
     def now(self) -> datetime:
         return FIXED_NOW
+
+    def today(self) -> date:
+        return FIXED_NOW.date()
 
 
 class FakeSession:

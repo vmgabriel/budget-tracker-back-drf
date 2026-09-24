@@ -7,7 +7,6 @@ from uuid import UUID
 
 from apps.transactions.application.dto import TransactionDetails, transaction_details
 from apps.transactions.application.exceptions import InvalidTransactionInput
-from apps.transactions.application.ports.clock import Clock
 from apps.transactions.application.ports.repositories import TransactionRepository
 from apps.transactions.domain.exceptions import (
     FutureTransactionDate,
@@ -20,6 +19,7 @@ from apps.transactions.domain.value_objects import (
     TransactionId,
     TransactionType,
 )
+from shared.domain.ports.clock import Clock
 
 
 @dataclass(frozen=True, slots=True)

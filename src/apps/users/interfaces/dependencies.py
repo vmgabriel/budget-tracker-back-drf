@@ -14,8 +14,9 @@ from apps.users.application.use_cases import (
     LogoutUser,
 )
 from apps.users.infrastructure.persistence.repositories import DjangoUserRepository
-from apps.users.infrastructure.security import DjangoPasswordHasher, SystemClock
+from apps.users.infrastructure.security import DjangoPasswordHasher
 from apps.users.infrastructure.sessions import DjangoUserSession
+from shared.infrastructure.clock import SystemClock
 
 
 @dataclass(frozen=True, slots=True)

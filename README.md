@@ -12,6 +12,9 @@ Business code lives under `src/apps/` and is separated into four layers:
 ```text
 src/
 ├── config/                         # Django, DRF, WSGI/ASGI, and Celery wiring
+├── shared/
+│   ├── domain/ports/               # Stable framework-independent shared ports
+│   └── infrastructure/             # Reusable implementations of shared ports
 ├── apps/
 │   ├── api/                        # Interface-only API v1 URL aggregation
 │   ├── users/
@@ -35,8 +38,10 @@ src/
 ```
 
 The dependency direction is `interfaces -> application -> domain`.
-Infrastructure implements ports declared by the application layer. Domain code
-will not import Django, Celery, PostgreSQL, or DRF.
+Infrastructure implements ports declared by the application layer. Generic,
+stable ports and implementations live under `src/shared/`; bounded contexts
+must not duplicate them. Domain code will not import Django, Celery,
+PostgreSQL, or DRF.
 
 ## Technology
 

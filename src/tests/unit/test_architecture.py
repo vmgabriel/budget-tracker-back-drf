@@ -38,6 +38,23 @@ def test_domain_modules_do_not_import_frameworks() -> None:
     assert not violations, f"Framework imports found in domain modules: {violations}"
 
 
+def test_shared_domain_modules_do_not_import_frameworks() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    shared_domain_files = sorted((project_root / "shared" / "domain").glob("**/*.py"))
+    violations: dict[Path, set[str]] = {}
+
+    for source_path in shared_domain_files:
+        forbidden = {
+            module
+            for module in _imported_modules(source_path)
+            if module.split(".", maxsplit=1)[0] in FORBIDDEN_DOMAIN_IMPORTS
+        }
+        if forbidden:
+            violations[source_path.relative_to(project_root)] = forbidden
+
+    assert not violations, f"Framework imports found in shared domain: {violations}"
+
+
 def test_application_modules_depend_only_inward() -> None:
     project_root = Path(__file__).resolve().parents[2]
     application_files = sorted((project_root / "apps").glob("*/application/**/*.py"))

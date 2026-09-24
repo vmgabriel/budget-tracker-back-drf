@@ -1,10 +1,7 @@
-"""Django-backed password hashing and system clock adapters."""
-
-from datetime import UTC, datetime
+"""Django-backed password hashing adapter."""
 
 from django.contrib.auth.hashers import check_password, make_password
 
-from apps.users.application.ports.clock import Clock
 from apps.users.application.ports.security import PasswordHasher
 
 
@@ -16,10 +13,3 @@ class DjangoPasswordHasher(PasswordHasher):
 
     def verify(self, raw_password: str, encoded_password: str) -> bool:
         return check_password(raw_password, encoded_password)
-
-
-class SystemClock(Clock):
-    """Provide timezone-aware UTC timestamps."""
-
-    def now(self) -> datetime:
-        return datetime.now(UTC)

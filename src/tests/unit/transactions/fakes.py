@@ -75,6 +75,9 @@ class FakeClock:
     def now(self) -> datetime:
         return self.current
 
+    def today(self) -> date:
+        return self.current.date()
+
 
 def make_transaction(
     *,

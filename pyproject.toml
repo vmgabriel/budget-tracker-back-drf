@@ -33,7 +33,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/apps", "src/config"]
+packages = ["src/apps", "src/shared", "src/config"]
 
 [tool.hatch.envs.default]
 type = "virtual"
