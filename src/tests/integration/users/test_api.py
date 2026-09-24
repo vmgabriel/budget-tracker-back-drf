@@ -14,6 +14,11 @@ User = get_user_model()
 pytestmark = [pytest.mark.integration, pytest.mark.django_db]
 
 
+def test_api_v1_routes_keep_existing_user_paths() -> None:
+    assert reverse("api_v1:users:register") == "/api/v1/auth/register/"
+    assert reverse("api_v1:users:admin-list") == "/api/v1/users/"
+
+
 def test_registration_login_me_and_logout() -> None:
     client = APIClient()
     credentials = {
@@ -22,7 +27,9 @@ def test_registration_login_me_and_logout() -> None:
         "password": "StrongPassword123!",
     }
 
-    registration = client.post(reverse("users:register"), credentials, format="json")
+    registration = client.post(
+        reverse("api_v1:users:register"), credentials, format="json"
+    )
 
     assert registration.status_code == 201
     created = User.objects.get(email="new-user@example.com")
@@ -32,19 +39,19 @@ def test_registration_login_me_and_logout() -> None:
     assert created.check_password(credentials["password"])
 
     login = client.post(
-        reverse("users:login"),
+        reverse("api_v1:users:login"),
         {"email": credentials["email"], "password": credentials["password"]},
         format="json",
     )
     assert login.status_code == 200
 
-    me = client.get(reverse("users:me"))
+    me = client.get(reverse("api_v1:users:me"))
     assert me.status_code == 200
     assert me.data["email"] == "new-user@example.com"
 
-    logout = client.post(reverse("users:logout"))
+    logout = client.post(reverse("api_v1:users:logout"))
     assert logout.status_code == 204
-    assert client.get(reverse("users:me")).status_code == 403
+    assert client.get(reverse("api_v1:users:me")).status_code == 403
 
 
 def test_duplicate_registration_is_rejected() -> None:
@@ -52,7 +59,7 @@ def test_duplicate_registration_is_rejected() -> None:
     client = APIClient()
 
     response = client.post(
-        reverse("users:register"),
+        reverse("api_v1:users:register"),
         {
             "email": "DUPLICATE@example.com",
             "full_name": "Another User",
@@ -72,16 +79,16 @@ def test_admin_can_list_and_change_plan_but_regular_user_cannot() -> None:
     client = APIClient()
 
     client.force_authenticate(regular_user)
-    forbidden = client.get(reverse("users:admin-list"))
+    forbidden = client.get(reverse("api_v1:users:admin-list"))
     assert forbidden.status_code == 403
 
     client.force_authenticate(administrator)
-    listing = client.get(reverse("users:admin-list"))
+    listing = client.get(reverse("api_v1:users:admin-list"))
     assert listing.status_code == 200
     assert listing.data["count"] >= 3
 
     plan_response = client.patch(
-        reverse("users:admin-plan", kwargs={"user_id": target.id}),
+        reverse("api_v1:users:admin-plan", kwargs={"user_id": target.id}),
         {"plan": PlanLevel.PREMIUM.value},
         format="json",
     )
@@ -90,7 +97,7 @@ def test_admin_can_list_and_change_plan_but_regular_user_cannot() -> None:
     assert target.plan == PlanLevel.PREMIUM.value
 
     profile_response = client.patch(
-        reverse("users:admin-detail", kwargs={"user_id": target.id}),
+        reverse("api_v1:users:admin-detail", kwargs={"user_id": target.id}),
         {
             "email": "updated-target@example.com",
             "full_name": "Updated Target",

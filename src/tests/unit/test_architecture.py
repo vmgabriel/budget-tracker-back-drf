@@ -36,3 +36,27 @@ def test_domain_modules_do_not_import_frameworks() -> None:
             violations[source_path.relative_to(project_root)] = forbidden
 
     assert not violations, f"Framework imports found in domain modules: {violations}"
+
+
+def test_application_modules_depend_only_inward() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    application_files = sorted((project_root / "apps").glob("*/application/**/*.py"))
+    violations: dict[Path, set[str]] = {}
+
+    for source_path in application_files:
+        forbidden: set[str] = set()
+        for module in _imported_modules(source_path):
+            if module.split(".", maxsplit=1)[0] in FORBIDDEN_DOMAIN_IMPORTS:
+                forbidden.add(module)
+                continue
+            parts = module.split(".")
+            if (
+                len(parts) >= 3
+                and parts[0] == "apps"
+                and parts[2] in {"infrastructure", "interfaces"}
+            ):
+                forbidden.add(module)
+        if forbidden:
+            violations[source_path.relative_to(project_root)] = forbidden
+
+    assert not violations, f"Outward imports found in application modules: {violations}"

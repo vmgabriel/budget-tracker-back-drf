@@ -10,5 +10,5 @@ urlpatterns = [
     path("api-auth/", include("rest_framework.urls")),
     path("healthz", liveness, name="liveness"),
     path("readyz", health, name="readiness"),
-    path("api/v1/", include("apps.users.interfaces.urls")),
+    path("api/v1/", include("apps.api.urls")),
 ]

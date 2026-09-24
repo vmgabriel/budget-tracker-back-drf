@@ -1,9 +1,9 @@
 # Budget Tracker
 
 A containerized Python 3.12 / Django 5.2 / Django REST Framework application
-built with Domain-Driven Design and Clean Architecture. The base scaffold and
-**Step 2 (users/authentication)** are implemented; transactions and dashboard
-aggregation will be added in the subsequent steps.
+built with Domain-Driven Design and Clean Architecture. The base scaffold,
+**Step 2 (users/authentication)**, and **Step 3 (transactions)** are implemented;
+dashboard aggregation will be added in the subsequent step.
 
 ## Architecture
 
@@ -13,6 +13,7 @@ Business code lives under `src/apps/` and is separated into four layers:
 src/
 ├── config/                         # Django, DRF, WSGI/ASGI, and Celery wiring
 ├── apps/
+│   ├── api/                        # Interface-only API v1 URL aggregation
 │   ├── users/
 │   │   ├── domain/                 # Pure entities, value objects, rules
 │   │   ├── application/            # Use cases and dependency-inversion ports
@@ -90,10 +91,16 @@ the following after a successful database connection:
 {"database": "ok", "status": "ok"}
 ```
 
+### API v1 URL aggregation
+
+All versioned routes are aggregated by `src/apps/api/urls.py` and mounted once
+from `config/urls.py` under `/api/v1/`. The aggregator defines the outer
+`api_v1` namespace while each context keeps its own `users` or `transactions`
+namespace. Existing public paths remain unchanged.
+
 ### Users and authentication API
 
-The users context is mounted under `/api/v1/` and uses Django session
-authentication:
+The users context uses Django session authentication:
 
 | Method | Endpoint | Access | Purpose |
 | --- | --- | --- | --- |
@@ -111,6 +118,21 @@ management. Passwords are hashed through Django's password hasher and are
 never represented by the domain or API result objects. Login also sets the
 standard CSRF cookie; browser clients sending authenticated unsafe requests
 must include the matching `X-CSRFToken` header.
+
+### Transactions API
+
+Transactions are owner-scoped and require authentication. Amounts must be
+positive, use no more than two decimal places, and cannot exceed
+`9999999999.99`. Dates cannot be in the future. Lists support `page` and
+`page_size` query parameters and return the standard count/page envelope.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/transactions/` | List the current user's transactions |
+| `POST` | `/api/v1/transactions/` | Create a transaction |
+| `GET` | `/api/v1/transactions/{id}/` | Retrieve an owned transaction |
+| `PATCH` | `/api/v1/transactions/{id}/` | Update an owned transaction |
+| `DELETE` | `/api/v1/transactions/{id}/` | Delete an owned transaction |
 
 Inspect or stop the stack:
 
