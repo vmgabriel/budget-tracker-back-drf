@@ -5,7 +5,10 @@ from decimal import Decimal
 
 import factory
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
+from apps.dashboard.domain.value_objects import Period
+from apps.dashboard.infrastructure.persistence.models import DashboardSummary
 from apps.transactions.domain.value_objects import TransactionType
 from apps.transactions.infrastructure.persistence.models import Transaction
 
@@ -50,3 +53,22 @@ class TransactionFactory(factory.django.DjangoModelFactory):
     category = factory.Sequence(lambda number: f"Category {number}")
     date = date(2025, 1, 10)
     description = "Test transaction"
+
+
+class DashboardSummaryFactory(factory.django.DjangoModelFactory):
+    """Create persisted pre-computed dashboard summaries."""
+
+    class Meta:
+        model = DashboardSummary
+
+    user = factory.SubFactory(UserFactory)
+    period = Period.DAILY.value
+    date = date(2025, 1, 10)
+    total_income = Decimal("100.00")
+    total_expense = Decimal("25.00")
+    net_balance = factory.LazyAttribute(
+        lambda summary: summary.total_income - summary.total_expense
+    )
+    is_stale = False
+    generated_at = factory.LazyFunction(timezone.now)
+    stale_at = None

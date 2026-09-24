@@ -6,6 +6,12 @@ from rest_framework import serializers
 from apps.users.domain.value_objects import PLAN_CHOICES
 
 
+class EmptyResponseSerializer(serializers.Serializer):
+    """Describe an intentionally empty response body for schema generation."""
+
+    status = serializers.CharField(required=False, allow_blank=True)
+
+
 class RegistrationSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=254)
     full_name = serializers.CharField(max_length=150)
@@ -51,6 +57,15 @@ class UserSerializer(serializers.Serializer):
     updated_at = serializers.DateTimeField(read_only=True)
 
 
+class UserPageSerializer(serializers.Serializer):
+    """Represent a bounded page of safe user representations."""
+
+    count = serializers.IntegerField(read_only=True)
+    page = serializers.IntegerField(read_only=True)
+    page_size = serializers.IntegerField(read_only=True)
+    results = UserSerializer(many=True, read_only=True)
+
+
 class AdminUpdateUserSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=254, required=False)
     full_name = serializers.CharField(
@@ -66,7 +81,7 @@ class AdminUpdateUserSerializer(serializers.Serializer):
     def validate(self, attrs: dict[str, object]) -> dict[str, object]:
         if not attrs:
             raise serializers.ValidationError(
-                "Provide full_name or is_active to update."
+                "Provide email, full_name, or is_active to update."
             )
         return attrs
 

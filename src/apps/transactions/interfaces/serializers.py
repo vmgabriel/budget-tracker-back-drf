@@ -76,3 +76,12 @@ class TransactionSerializer(serializers.Serializer):
     description = serializers.CharField(read_only=True, allow_null=True)
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
+
+
+class TransactionPageSerializer(serializers.Serializer):
+    """Represent a bounded page of safe transaction results."""
+
+    count = serializers.IntegerField(read_only=True)
+    page = serializers.IntegerField(read_only=True)
+    page_size = serializers.IntegerField(read_only=True)
+    results = TransactionSerializer(many=True, read_only=True)

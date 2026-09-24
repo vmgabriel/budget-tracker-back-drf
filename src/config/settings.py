@@ -19,6 +19,7 @@ env = environ.Env(
     DJANGO_CSRF_TRUSTED_ORIGINS=(list, []),
     DJANGO_DATABASE_CONN_MAX_AGE=(int, 60),
     DJANGO_LOG_LEVEL=(str, "INFO"),
+    DJANGO_LOG_QUERIES=(bool, False),
     DJANGO_SECURE_SSL_REDIRECT=(bool, False),
     DJANGO_SESSION_COOKIE_SECURE=(bool, False),
     DJANGO_CSRF_COOKIE_SECURE=(bool, False),
@@ -33,6 +34,7 @@ if (PROJECT_ROOT / ".env").is_file():
     environ.Env.read_env(PROJECT_ROOT / ".env")
 
 ENVIRONMENT = env("DJANGO_ENVIRONMENT", default="local").lower()
+LOG_QUERIES = env.bool("DJANGO_LOG_QUERIES", default=False)
 if ENVIRONMENT not in {"local", "production", "test"}:
     raise ImproperlyConfigured(
         "DJANGO_ENVIRONMENT must be one of: local, production, or test."
@@ -59,6 +61,8 @@ if ENVIRONMENT == "production":
         )
     if not ALLOWED_HOSTS:
         raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS is required in production.")
+    if LOG_QUERIES:
+        raise ImproperlyConfigured("DJANGO_LOG_QUERIES must be disabled in production.")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -68,9 +72,10 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "apps.users.apps.UsersConfig",
     "apps.transactions.apps.TransactionsConfig",
-    "apps.dashboard",
+    "apps.dashboard.apps.DashboardConfig",
 ]
 
 MIDDLEWARE = [
@@ -82,6 +87,9 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+if LOG_QUERIES:
+    MIDDLEWARE.insert(1, "config.query_logging.QueryLoggingMiddleware")
 
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
@@ -143,7 +151,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
+STATIC_ROOT = PROJECT_ROOT / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 APPEND_SLASH = True
@@ -155,12 +163,47 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "config.api.exception_handler",
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+    ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ]
     + (["rest_framework.renderers.BrowsableAPIRenderer"] if DEBUG else []),
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
 }
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Budget Tracker API",
+    "DESCRIPTION": (
+        "Session-authenticated personal budgeting API with owner-scoped "
+        "transactions and pre-computed dashboard summaries."
+    ),
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": "/api/v1",
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SORT_OPERATIONS": True,
+    "SWAGGER_UI_SETTINGS": {
+        "deepLinking": True,
+        "persistAuthorization": True,
+    },
+    "SWAGGER_UI_DIST": "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14",
+    "SWAGGER_UI_FAVICON_HREF": (
+        "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/favicon-32x32.png"
+    ),
+}
+
+if ENVIRONMENT == "production":
+    SPECTACULAR_SETTINGS["SERVE_PUBLIC"] = False
+    SPECTACULAR_SETTINGS["SERVE_PERMISSIONS"] = [
+        "rest_framework.permissions.IsAdminUser"
+    ]
+else:
+    SPECTACULAR_SETTINGS["SERVE_PUBLIC"] = True
+    SPECTACULAR_SETTINGS["SERVE_PERMISSIONS"] = ["rest_framework.permissions.AllowAny"]
 
 if ENVIRONMENT == "test":
     PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
@@ -184,7 +227,26 @@ CSRF_COOKIE_HTTPONLY = False
 SESSION_COOKIE_AGE = env.int("DJANGO_SESSION_COOKIE_AGE", default=60 * 60 * 24 * 14)
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
+if ENVIRONMENT == "production":
+    if not SECURE_SSL_REDIRECT:
+        raise ImproperlyConfigured(
+            "DJANGO_SECURE_SSL_REDIRECT must be true in production."
+        )
+    if not SESSION_COOKIE_SECURE or not CSRF_COOKIE_SECURE:
+        raise ImproperlyConfigured(
+            "Session and CSRF cookies must be secure in production."
+        )
+    if len(DJANGO_SECRET_KEY) < 32:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY must contain at least 32 characters in production."
+        )
+    if "*" in ALLOWED_HOSTS:
+        raise ImproperlyConfigured("Wildcard hosts are not allowed in production.")
+    if any(not origin.startswith("https://") for origin in CSRF_TRUSTED_ORIGINS):
+        raise ImproperlyConfigured("Production CSRF trusted origins must use HTTPS.")
+
 if env.bool("DJANGO_TRUST_PROXY_HEADERS", default=False):
+
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 CELERY_BROKER_URL = env("REDIS_URL", default="redis://localhost:6379/0")
@@ -197,12 +259,24 @@ CELERY_ENABLE_UTC = True
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 10
 CELERY_TASK_SOFT_TIME_LIMIT = 60 * 9
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_RESULT_EXPIRES = 60 * 60 * 24
 CELERY_TASK_ALWAYS_EAGER = env.bool(
     "CELERY_TASK_ALWAYS_EAGER", default=ENVIRONMENT == "test"
 )
 CELERY_TASK_EAGER_PROPAGATES = ENVIRONMENT == "test"
+CELERY_BEAT_SCHEDULE = {
+    "reconcile-dashboard-summaries": {
+        "task": "apps.dashboard.infrastructure.tasks.reconcile_user_dashboards",
+        "schedule": 60 * 60 * 24,
+        "options": {"expires": 60 * 30},
+    }
+}
 
-LOGGING = {
+LOGGING: dict[str, Any] = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
@@ -234,3 +308,10 @@ LOGGING = {
         "level": env("DJANGO_LOG_LEVEL", default="INFO"),
     },
 }
+
+if LOG_QUERIES:
+    LOGGING["loggers"]["django.db.backends"] = {
+        "handlers": ["console"],
+        "level": "DEBUG",
+        "propagate": False,
+    }

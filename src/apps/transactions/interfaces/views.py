@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -9,6 +10,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.serializers import PaginationQuerySerializer
 from apps.transactions.application.exceptions import InvalidTransactionInput
 from apps.transactions.application.use_cases import (
     CreateTransactionCommand,
@@ -19,9 +21,11 @@ from apps.transactions.domain.value_objects import TransactionId, TransactionTyp
 from apps.transactions.interfaces.dependencies import build_transaction_use_cases
 from apps.transactions.interfaces.serializers import (
     CreateTransactionSerializer,
+    TransactionPageSerializer,
     TransactionSerializer,
     UpdateTransactionSerializer,
 )
+from config.serializers import ERROR_RESPONSES
 
 
 def _authenticated_user_id(request: Request) -> UUID:
@@ -48,6 +52,14 @@ class TransactionListCreateView(APIView):
 
     permission_classes = (IsAuthenticated,)
 
+    @extend_schema(
+        operation_id="transactions_list",
+        parameters=[PaginationQuerySerializer],
+        responses={
+            status.HTTP_200_OK: TransactionPageSerializer,
+            **ERROR_RESPONSES,
+        },
+    )
     def get(self, request: Request) -> Response:
         try:
             page = int(request.query_params.get("page", "1"))
@@ -76,6 +88,14 @@ class TransactionListCreateView(APIView):
             }
         )
 
+    @extend_schema(
+        operation_id="transactions_create",
+        request=CreateTransactionSerializer,
+        responses={
+            status.HTTP_201_CREATED: TransactionSerializer,
+            **ERROR_RESPONSES,
+        },
+    )
     def post(self, request: Request) -> Response:
         serializer = CreateTransactionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -105,6 +125,10 @@ class TransactionDetailView(APIView):
 
     permission_classes = (IsAuthenticated,)
 
+    @extend_schema(
+        operation_id="transactions_retrieve",
+        responses={status.HTTP_200_OK: TransactionSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request: Request, transaction_id: UUID) -> Response:
         try:
             transaction = build_transaction_use_cases().get.execute(
@@ -115,6 +139,11 @@ class TransactionDetailView(APIView):
             raise _translate_transaction_error(error) from error
         return _transaction_response(transaction)
 
+    @extend_schema(
+        operation_id="transactions_partial_update",
+        request=UpdateTransactionSerializer,
+        responses={status.HTTP_200_OK: TransactionSerializer, **ERROR_RESPONSES},
+    )
     def patch(self, request: Request, transaction_id: UUID) -> Response:
         serializer = UpdateTransactionSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -141,6 +170,12 @@ class TransactionDetailView(APIView):
             raise _translate_transaction_error(error) from error
         return _transaction_response(transaction)
 
+    @extend_schema(
+        responses={
+            status.HTTP_204_NO_CONTENT: None,
+            **ERROR_RESPONSES,
+        }
+    )
     def delete(self, request: Request, transaction_id: UUID) -> Response:
         try:
             build_transaction_use_cases().delete.execute(

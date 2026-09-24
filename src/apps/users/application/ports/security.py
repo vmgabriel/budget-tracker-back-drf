@@ -22,6 +22,8 @@ class UserSession(Protocol):
 
     def login(self, user_id: UserId) -> None:
         """Start a session for a user identity."""
+        ...
 
     def logout(self) -> None:
         """End the current user session."""
+        ...

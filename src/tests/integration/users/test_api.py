@@ -19,6 +19,29 @@ def test_api_v1_routes_keep_existing_user_paths() -> None:
     assert reverse("api_v1:users:admin-list") == "/api/v1/users/"
 
 
+def test_nested_authentication_aliases_are_available() -> None:
+    client = APIClient()
+    credentials = {
+        "email": "nested-alias@example.com",
+        "full_name": "Nested Alias",
+        "password": "StrongPassword123!",
+    }
+
+    registered = client.post(
+        reverse("api_v1:users:register-nested"), credentials, format="json"
+    )
+    logged_in = client.post(
+        reverse("api_v1:users:login-nested"),
+        {"email": credentials["email"], "password": credentials["password"]},
+        format="json",
+    )
+    profile = client.get(reverse("api_v1:users:me-nested"))
+
+    assert registered.status_code == 201
+    assert logged_in.status_code == 200
+    assert profile.status_code == 200
+
+
 def test_registration_login_me_and_logout() -> None:
     client = APIClient()
     credentials = {
@@ -54,6 +77,27 @@ def test_registration_login_me_and_logout() -> None:
     assert client.get(reverse("api_v1:users:me")).status_code == 403
 
 
+def test_invalid_login_credentials_return_validation_error() -> None:
+    UserFactory(email="known@example.com", password="KnownPassword123!")
+    client = APIClient()
+
+    unknown = client.post(
+        reverse("api_v1:users:login"),
+        {"email": "unknown@example.com", "password": "WrongPassword123!"},
+        format="json",
+    )
+    wrong_password = client.post(
+        reverse("api_v1:users:login"),
+        {"email": "known@example.com", "password": "WrongPassword123!"},
+        format="json",
+    )
+
+    assert unknown.status_code == 400
+    assert wrong_password.status_code == 400
+    assert unknown.data["error"]["code"] == "validation_error"
+    assert wrong_password.data["error"]["code"] == "validation_error"
+
+
 def test_duplicate_registration_is_rejected() -> None:
     UserFactory(email="duplicate@example.com")
     client = APIClient()
@@ -70,6 +114,18 @@ def test_duplicate_registration_is_rejected() -> None:
 
     assert response.status_code == 400
     assert "email" in response.data
+
+
+def test_admin_list_rejects_oversized_page() -> None:
+    administrator: Any = UserFactory(
+        email="admin-page-limit@example.com", is_staff=True
+    )
+    client = APIClient()
+    client.force_authenticate(administrator)
+
+    response = client.get(reverse("api_v1:users:admin-list"), {"page": 10_001})
+
+    assert response.status_code == 400
 
 
 def test_admin_can_list_and_change_plan_but_regular_user_cannot() -> None:

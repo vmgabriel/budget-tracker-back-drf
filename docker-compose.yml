@@ -8,6 +8,7 @@ x-app-environment: &app-environment
   DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,web}
   DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
   DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+  DJANGO_LOG_QUERIES: ${DJANGO_LOG_QUERIES:-false}
   DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://budget_tracker:budget_tracker@db:5432/budget_tracker}
   REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
   CELERY_RESULT_BACKEND: ${DOCKER_CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -61,6 +62,16 @@ services:
       - celery
       - --app=config
       - worker
+      - --loglevel=${CELERY_LOG_LEVEL:-INFO}
+
+  celery_beat:
+    <<: *app-service
+    healthcheck:
+      disable: true
+    command:
+      - celery
+      - --app=config
+      - beat
       - --loglevel=${CELERY_LOG_LEVEL:-INFO}
 
   db:

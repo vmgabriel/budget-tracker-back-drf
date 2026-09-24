@@ -11,18 +11,20 @@ class UserRepository(Protocol):
 
     def add(self, user: User) -> User:
         """Persist a new user and return its stored representation."""
-        raise NotADirectoryError()
+        raise NotImplementedError()
 
     def get_by_email(self, email: Email) -> User | None:
         """Find a user by normalized email address."""
+        ...
 
     def get_by_id(self, user_id: UserId) -> User | None:
         """Find a user by identity."""
+        ...
 
     def update(self, user: User) -> User:
         """Persist changes made to an existing user."""
-        raise NotADirectoryError()
+        raise NotImplementedError()
 
     def list(self, *, offset: int, limit: int) -> tuple[list[User], int]:
         """Return a page of users and the total number of users."""
-        raise NotADirectoryError()
+        raise NotImplementedError()

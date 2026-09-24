@@ -4,8 +4,8 @@ SHELL := /bin/bash
 COMPOSE ?= docker compose
 ENV_FILE := .env
 
-.PHONY: help install check-env build up repair down stop logs migrate makemigrations shell superuser \
-	test test-unit test-integration lint format check clean
+.PHONY: help install check-env build up repair down stop logs migrate makemigrations migrations-check \
+	shell superuser test test-unit test-integration lint format check schema collectstatic clean
 
 help: ## Show the available commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -45,6 +45,9 @@ migrate: check-env ## Apply database migrations inside the web container
 makemigrations: check-env ## Create new Django migrations
 	$(COMPOSE) exec web python manage.py makemigrations
 
+migrations-check: ## Verify model changes have committed migrations
+	@hatch run default:python manage.py makemigrations --check --dry-run
+
 shell: check-env ## Open the Django shell inside the web container
 	$(COMPOSE) exec web python manage.py shell
 
@@ -73,6 +76,12 @@ format: ## Auto-fix lint findings and format Python files
 
 check: ## Run Django's deployment checks with Hatch
 	@hatch run default:python manage.py check
+
+schema: ## Validate and generate the OpenAPI schema
+	@hatch run default:python manage.py spectacular --file /tmp/budget-tracker-schema.yml --validate
+
+collectstatic: check-env ## Collect static assets inside the web container
+	$(COMPOSE) exec web python manage.py collectstatic --noinput
 
 clean: ## Remove local caches and build artifacts
 	@find . -type d -name __pycache__ -prune -exec rm -rf {} +

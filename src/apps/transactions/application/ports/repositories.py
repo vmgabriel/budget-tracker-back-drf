@@ -18,6 +18,7 @@ class TransactionRepository(Protocol):
         self, transaction_id: TransactionId, user_id: UUID
     ) -> Transaction | None:
         """Find a transaction only when it belongs to ``user_id``."""
+        ...
 
     def update(self, transaction: Transaction) -> Transaction:
         """Persist changes made to an existing transaction."""

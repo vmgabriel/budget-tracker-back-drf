@@ -51,7 +51,11 @@ class Transaction(models.Model):
             models.Index(
                 fields=("user", "-date", "-created_at", "-id"),
                 name="transaction_owner_date_idx",
-            )
+            ),
+            models.Index(
+                fields=("user", "date", "transaction_type"),
+                name="transaction_owner_type_idx",
+            ),
         ]
 
     def __str__(self) -> str:

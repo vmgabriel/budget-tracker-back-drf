@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from django.middleware.csrf import get_token
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
@@ -10,6 +11,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.api.serializers import PaginationQuerySerializer
 from apps.users.application.exceptions import (
     AuthenticationFailed,
     InvalidUserInput,
@@ -28,10 +30,13 @@ from apps.users.interfaces.dependencies import (
 from apps.users.interfaces.serializers import (
     AdminUpdateUserSerializer,
     ChangeUserPlanSerializer,
+    EmptyResponseSerializer,
     LoginSerializer,
     RegistrationSerializer,
+    UserPageSerializer,
     UserSerializer,
 )
+from config.serializers import ERROR_RESPONSES
 
 
 def _user_response(user: object) -> Response:
@@ -54,6 +59,10 @@ class RegisterView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
 
+    @extend_schema(
+        request=RegistrationSerializer,
+        responses={status.HTTP_201_CREATED: UserSerializer, **ERROR_RESPONSES},
+    )
     def post(self, request: Request) -> Response:
         serializer = RegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -78,6 +87,10 @@ class LoginView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
 
+    @extend_schema(
+        request=LoginSerializer,
+        responses={status.HTTP_200_OK: UserSerializer, **ERROR_RESPONSES},
+    )
     def post(self, request: Request) -> Response:
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -96,7 +109,14 @@ class LoginView(APIView):
 
 class LogoutView(APIView):
     permission_classes = (IsAuthenticated,)
+    serializer_class = EmptyResponseSerializer
 
+    @extend_schema(
+        responses={
+            status.HTTP_204_NO_CONTENT: None,
+            **ERROR_RESPONSES,
+        }
+    )
     def post(self, request: Request) -> Response:
         build_authentication_use_cases(request._request).logout.execute()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -105,6 +125,7 @@ class LogoutView(APIView):
 class MeView(APIView):
     permission_classes = (IsAuthenticated,)
 
+    @extend_schema(responses={status.HTTP_200_OK: UserSerializer, **ERROR_RESPONSES})
     def get(self, request: Request) -> Response:
         user_id = request.user.pk
         if not isinstance(user_id, UUID):
@@ -119,6 +140,11 @@ class MeView(APIView):
 class AdminUserListView(APIView):
     permission_classes = (IsAdminUser,)
 
+    @extend_schema(
+        operation_id="users_list",
+        parameters=[PaginationQuerySerializer],
+        responses={status.HTTP_200_OK: UserPageSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request: Request) -> Response:
         try:
             page = int(request.query_params.get("page", "1"))
@@ -147,6 +173,10 @@ class AdminUserListView(APIView):
 class AdminUserDetailView(APIView):
     permission_classes = (IsAdminUser,)
 
+    @extend_schema(
+        operation_id="users_retrieve",
+        responses={status.HTTP_200_OK: UserSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request: Request, user_id: UUID) -> Response:
         try:
             user = build_user_use_cases().get.execute(UserId(user_id))
@@ -154,6 +184,10 @@ class AdminUserDetailView(APIView):
             raise _translate_user_error(exc) from exc
         return _user_response(user)
 
+    @extend_schema(
+        request=AdminUpdateUserSerializer,
+        responses={status.HTTP_200_OK: UserSerializer, **ERROR_RESPONSES},
+    )
     def patch(self, request: Request, user_id: UUID) -> Response:
         serializer = AdminUpdateUserSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -177,6 +211,10 @@ class AdminUserDetailView(APIView):
 class AdminUserPlanView(APIView):
     permission_classes = (IsAdminUser,)
 
+    @extend_schema(
+        request=ChangeUserPlanSerializer,
+        responses={status.HTTP_200_OK: UserSerializer, **ERROR_RESPONSES},
+    )
     def patch(self, request: Request, user_id: UUID) -> Response:
         serializer = ChangeUserPlanSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

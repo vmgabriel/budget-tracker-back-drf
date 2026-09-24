@@ -9,4 +9,5 @@ urlpatterns = [
     # compatibility: /api/v1/auth/... and /api/v1/users/...
     path("", include("apps.users.interfaces.urls")),
     path("transactions/", include("apps.transactions.interfaces.urls")),
+    path("dashboard/", include("apps.dashboard.interfaces.urls")),
 ]
