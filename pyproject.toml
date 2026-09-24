@@ -1,0 +1,162 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "budget-tracker"
+version = "0.1.0"
+description = "A DDD-inspired personal budget tracking application."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "Django>=5.2,<5.3",
+    "celery[redis]>=5.5.3,<5.6",
+    "django-environ>=0.12,<0.13",
+    "djangorestframework>=3.16,<3.17",
+    "gunicorn>=23,<24",
+    "psycopg[binary]>=3.2.9,<3.3",
+]
+
+[project.optional-dependencies]
+test = [
+    "factory-boy>=3.3,<4",
+    "freezegun>=1.5,<2",
+    "pytest>=8.4,<9",
+    "pytest-cov>=7,<8",
+    "pytest-django>=4.11,<5",
+]
+dev = [
+    "black>=25,<26",
+    "django-stubs[compatible-mypy]>=5.2,<6",
+    "mypy>=1.16,<2",
+    "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/apps", "src/config"]
+
+[tool.hatch.envs.default]
+type = "virtual"
+
+[tool.hatch.envs.default.env-vars]
+DJANGO_SETTINGS_MODULE = "config.settings"
+DJANGO_ENVIRONMENT = "local"
+DJANGO_SECRET_KEY = "unsafe-development-only-hatch-secret"
+DJANGO_DEBUG = "true"
+DJANGO_ALLOWED_HOSTS = "localhost,127.0.0.1,testserver"
+DATABASE_URL = "postgresql://budget_tracker:budget_tracker@localhost:5432/budget_tracker"
+REDIS_URL = "redis://localhost:6379/0"
+
+[tool.hatch.envs.default.scripts]
+server = "python manage.py runserver 0.0.0.0:8000"
+worker = "celery -A config worker --loglevel=INFO"
+
+[tool.hatch.envs.test]
+type = "virtual"
+dependencies = [
+    "factory-boy>=3.3,<4",
+    "freezegun>=1.5,<2",
+    "pytest>=8.4,<9",
+    "pytest-cov>=7,<8",
+    "pytest-django>=4.11,<5",
+]
+
+[tool.hatch.envs.test.env-vars]
+DJANGO_SETTINGS_MODULE = "config.settings"
+DJANGO_ENVIRONMENT = "test"
+DJANGO_SECRET_KEY = "unsafe-test-only-secret"
+DJANGO_DEBUG = "false"
+DJANGO_ALLOWED_HOSTS = "localhost,127.0.0.1,testserver"
+DATABASE_URL = "postgresql://budget_tracker:budget_tracker@localhost:5432/budget_tracker"
+TEST_DATABASE_URL = "postgresql://budget_tracker:budget_tracker@localhost:5432/test_budget_tracker"
+REDIS_URL = "redis://localhost:6379/15"
+CELERY_TASK_ALWAYS_EAGER = "true"
+
+[tool.hatch.envs.lint]
+type = "virtual"
+dependencies = [
+    "black>=25,<26",
+    "factory-boy>=3.3,<4",
+    "django-stubs[compatible-mypy]>=5.2,<6",
+    "mypy>=1.16,<2",
+    "pytest>=8.4,<9",
+    "ruff>=0.12,<1",
+]
+
+[tool.hatch.envs.lint.env-vars]
+DJANGO_SETTINGS_MODULE = "config.settings"
+DJANGO_ENVIRONMENT = "test"
+DJANGO_SECRET_KEY = "unsafe-test-only-secret"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+addopts = "--strict-config --strict-markers -ra"
+python_files = ["test_*.py", "*_test.py"]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+markers = [
+    "unit: isolated domain and application tests that do not require a database",
+    "integration: infrastructure, interface, and database integration tests",
+]
+filterwarnings = [
+    "error",
+    "ignore:.*remove_queries_from_warnings.*:DeprecationWarning:django.*",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["apps"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
+skip_covered = true
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+extend-exclude = '(^|/)migrations(/|$)'
+
+[tool.ruff]
+line-length = 88
+src = ["src"]
+target-version = "py312"
+extend-exclude = ["src/apps/*/infrastructure/persistence/migrations"]
+
+[tool.ruff.lint]
+select = ["B", "C4", "E", "F", "I", "SIM", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/migrations/*.py" = ["E402", "F401"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+mypy_path = "src"
+explicit_package_bases = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unused_ignores = true
+exclude = ["src/apps/.*/infrastructure/persistence/migrations/"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings"
+
+[[tool.mypy.overrides]]
+module = [
+    "celery",
+    "celery.*",
+    "environ",
+    "environ.*",
+    "rest_framework",
+    "rest_framework.*",
+]
+follow_untyped_imports = true
+ignore_missing_imports = true

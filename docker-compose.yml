@@ -1,0 +1,131 @@
+name: ${COMPOSE_PROJECT_NAME:-budget-tracker}
+
+x-app-environment: &app-environment
+  DJANGO_SETTINGS_MODULE: config.settings
+  DJANGO_ENVIRONMENT: ${DJANGO_ENVIRONMENT:-local}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY must be set in .env}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,web}
+  DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+  DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+  DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://budget_tracker:budget_tracker@db:5432/budget_tracker}
+  REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
+  CELERY_RESULT_BACKEND: ${DOCKER_CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+  CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
+  GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+
+x-app-service: &app-service
+  build:
+    context: .
+    target: runtime
+  env_file:
+    - .env
+  environment: *app-environment
+  volumes:
+    - ./src:/app/src:ro
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 30s
+
+services:
+  web:
+    <<: *app-service
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --bind=0.0.0.0:8000
+      - --workers=${GUNICORN_WORKERS:-3}
+      - --threads=2
+      - --timeout=30
+      - --access-logfile=-
+      - --error-logfile=-
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/readyz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8000}:8000"
+
+  celery_worker:
+    <<: *app-service
+    healthcheck:
+      disable: true
+    command:
+      - celery
+      - --app=config
+      - worker
+      - --loglevel=${CELERY_LOG_LEVEL:-INFO}
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-budget_tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-budget_tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-budget_tracker} -d ${POSTGRES_DB:-budget_tracker}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    init: true
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    init: true
+
+  tester:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    command: ["pytest", "src/tests/integration", "-m", "integration", "--reuse-db"]
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DJANGO_ENVIRONMENT: test
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY must be set in .env}
+      DJANGO_DEBUG: "false"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://budget_tracker:budget_tracker@db:5432/budget_tracker}
+      TEST_DATABASE_URL: ${DOCKER_TEST_DATABASE_URL:-postgresql://budget_tracker:budget_tracker@db:5432/test_budget_tracker}
+      REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${DOCKER_CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      CELERY_TASK_ALWAYS_EAGER: "true"
+    volumes:
+      - ./src:/app/src:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    init: true
+
+volumes:
+  postgres_data:
+  redis_data:

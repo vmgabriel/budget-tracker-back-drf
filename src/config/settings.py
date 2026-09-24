@@ -1,0 +1,236 @@
+"""Django settings for the Budget Tracker project.
+
+The domain and application layers remain independent of this module. Only
+Django-facing infrastructure and interface adapters load these settings.
+"""
+
+from pathlib import Path
+from typing import Any
+
+import environ
+from django.core.exceptions import ImproperlyConfigured
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = BASE_DIR.parent
+
+env = environ.Env(
+    DJANGO_DEBUG=(bool, False),
+    DJANGO_ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
+    DJANGO_CSRF_TRUSTED_ORIGINS=(list, []),
+    DJANGO_DATABASE_CONN_MAX_AGE=(int, 60),
+    DJANGO_LOG_LEVEL=(str, "INFO"),
+    DJANGO_SECURE_SSL_REDIRECT=(bool, False),
+    DJANGO_SESSION_COOKIE_SECURE=(bool, False),
+    DJANGO_CSRF_COOKIE_SECURE=(bool, False),
+    DJANGO_TRUST_PROXY_HEADERS=(bool, False),
+    DJANGO_SECURE_HSTS_SECONDS=(int, 0),
+    DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=(bool, False),
+    DJANGO_SECURE_HSTS_PRELOAD=(bool, False),
+    DJANGO_SESSION_COOKIE_AGE=(int, 60 * 60 * 24 * 14),
+)
+
+if (PROJECT_ROOT / ".env").is_file():
+    environ.Env.read_env(PROJECT_ROOT / ".env")
+
+ENVIRONMENT = env("DJANGO_ENVIRONMENT", default="local").lower()
+if ENVIRONMENT not in {"local", "production", "test"}:
+    raise ImproperlyConfigured(
+        "DJANGO_ENVIRONMENT must be one of: local, production, or test."
+    )
+
+DJANGO_SECRET_KEY = env(
+    "DJANGO_SECRET_KEY",
+    default="unsafe-development-only-settings-secret",
+)
+SECRET_KEY = DJANGO_SECRET_KEY
+DEBUG = env.bool("DJANGO_DEBUG", default=ENVIRONMENT != "production")
+_default_allowed_hosts = (
+    [] if ENVIRONMENT == "production" else ["localhost", "127.0.0.1"]
+)
+ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=_default_allowed_hosts)
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
+
+if ENVIRONMENT == "production":
+    if DEBUG:
+        raise ImproperlyConfigured("DJANGO_DEBUG must be false in production.")
+    if DJANGO_SECRET_KEY.startswith("unsafe-development-only"):
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY must be replaced before using production settings."
+        )
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS is required in production.")
+
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "apps.users.apps.UsersConfig",
+    "apps.transactions",
+    "apps.dashboard",
+]
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+_default_database_url = (
+    "postgresql://budget_tracker:budget_tracker@localhost:5432/budget_tracker"
+)
+_database_url = env("DATABASE_URL", default=_default_database_url)
+database_config: dict[str, Any] = env.db_url("DATABASE_URL", default=_database_url)
+if ENVIRONMENT == "test":
+    _test_database_url = env("TEST_DATABASE_URL", default=_database_url)
+    test_database_config: dict[str, Any] = env.db_url(
+        "TEST_DATABASE_URL", default=_test_database_url
+    )
+    test_database_config["TEST"] = {"NAME": test_database_config["NAME"]}
+    database_config = test_database_config
+
+database_config["CONN_MAX_AGE"] = env.int("DJANGO_DATABASE_CONN_MAX_AGE", default=60)
+database_config["CONN_HEALTH_CHECKS"] = True
+
+if ENVIRONMENT == "production" and database_config["ENGINE"] != (
+    "django.db.backends.postgresql"
+):
+    raise ImproperlyConfigured("Production must use the PostgreSQL database backend.")
+
+DATABASES = {"default": database_config}
+
+AUTH_USER_MODEL = "users.User"
+
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        "NAME": "django.contrib.auth.password_validation."
+        "UserAttributeSimilarityValidator"
+    },
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+LANGUAGE_CODE = env("DJANGO_LANGUAGE_CODE", default="en-us")
+TIME_ZONE = env("DJANGO_TIME_ZONE", default="UTC")
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+APPEND_SLASH = True
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ]
+    + (["rest_framework.renderers.BrowsableAPIRenderer"] if DEBUG else []),
+    "TEST_REQUEST_DEFAULT_FORMAT": "json",
+}
+
+if ENVIRONMENT == "test":
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+_secure_by_default = ENVIRONMENT == "production"
+SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=_secure_by_default)
+SESSION_COOKIE_SECURE = env.bool(
+    "DJANGO_SESSION_COOKIE_SECURE", default=_secure_by_default
+)
+CSRF_COOKIE_SECURE = env.bool("DJANGO_CSRF_COOKIE_SECURE", default=_secure_by_default)
+SECURE_HSTS_SECONDS = env.int("DJANGO_SECURE_HSTS_SECONDS", default=0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool(
+    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", default=False
+)
+SECURE_HSTS_PRELOAD = env.bool("DJANGO_SECURE_HSTS_PRELOAD", default=False)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False
+SESSION_COOKIE_AGE = env.int("DJANGO_SESSION_COOKIE_AGE", default=60 * 60 * 24 * 14)
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+if env.bool("DJANGO_TRUST_PROXY_HEADERS", default=False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+CELERY_BROKER_URL = env("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default=CELERY_BROKER_URL)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 60 * 10
+CELERY_TASK_SOFT_TIME_LIMIT = 60 * 9
+CELERY_TASK_ALWAYS_EAGER = env.bool(
+    "CELERY_TASK_ALWAYS_EAGER", default=ENVIRONMENT == "test"
+)
+CELERY_TASK_EAGER_PROPAGATES = ENVIRONMENT == "test"
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        }
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": env("DJANGO_LOG_LEVEL", default="INFO"),
+            "propagate": False,
+        },
+        "celery": {
+            "handlers": ["console"],
+            "level": env("CELERY_LOG_LEVEL", default="INFO"),
+            "propagate": False,
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": env("DJANGO_LOG_LEVEL", default="INFO"),
+    },
+}
