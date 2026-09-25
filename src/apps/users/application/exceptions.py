@@ -10,4 +10,4 @@ class InvalidUserInput(UserApplicationError):
 
 
 class AuthenticationFailed(UserApplicationError):
-    """Raised when credentials cannot establish a user session."""
+    """Raised when supplied credentials cannot authenticate a user."""

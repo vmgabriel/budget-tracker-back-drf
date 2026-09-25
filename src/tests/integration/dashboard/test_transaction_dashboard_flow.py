@@ -14,10 +14,12 @@ from tests.factories import UserFactory
 @pytest.mark.integration
 @pytest.mark.django_db(transaction=True)
 @freeze_time("2025-01-15 12:00:00")
-def test_transaction_creation_refreshes_dashboard_overview() -> None:
+def test_transaction_creation_refreshes_dashboard_overview(
+    jwt_token_factory: Any,
+) -> None:
     user: Any = UserFactory()
     client = APIClient()
-    client.force_authenticate(user)
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {jwt_token_factory(user)}")
 
     created = client.post(
         reverse("api_v1:transactions:list"),

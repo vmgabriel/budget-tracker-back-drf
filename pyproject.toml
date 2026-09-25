@@ -13,6 +13,7 @@ dependencies = [
     "celery[redis]>=5.5.3,<5.6",
     "django-environ>=0.12,<0.13",
     "djangorestframework>=3.16,<3.17",
+    "djangorestframework-simplejwt>=5.3.0,<5.6",
     "drf-spectacular>=0.28,<0.30",
     "gunicorn>=23,<24",
     "psycopg[binary]>=3.2.9,<3.3",
@@ -38,11 +39,14 @@ packages = ["src/apps", "src/shared", "src/config"]
 
 [tool.hatch.envs.default]
 type = "virtual"
+dependencies = [
+    "djangorestframework-simplejwt>=5.3.0,<5.6",
+]
 
 [tool.hatch.envs.default.env-vars]
 DJANGO_SETTINGS_MODULE = "config.settings"
 DJANGO_ENVIRONMENT = "local"
-DJANGO_SECRET_KEY = "unsafe-development-only-hatch-secret"
+DJANGO_SECRET_KEY = "unsafe-development-only-hatch-secret-32-chars-minimum"
 DJANGO_DEBUG = "true"
 DJANGO_ALLOWED_HOSTS = "localhost,127.0.0.1,testserver"
 DATABASE_URL = "postgresql://budget_tracker:budget_tracker@localhost:5432/budget_tracker"
@@ -65,7 +69,7 @@ dependencies = [
 [tool.hatch.envs.test.env-vars]
 DJANGO_SETTINGS_MODULE = "config.settings"
 DJANGO_ENVIRONMENT = "test"
-DJANGO_SECRET_KEY = "unsafe-test-only-secret"
+DJANGO_SECRET_KEY = "unsafe-test-only-secret-with-at-least-32-characters"
 DJANGO_DEBUG = "false"
 DJANGO_ALLOWED_HOSTS = "localhost,127.0.0.1,testserver"
 DATABASE_URL = "postgresql://budget_tracker:budget_tracker@localhost:5432/budget_tracker"
@@ -87,7 +91,7 @@ dependencies = [
 [tool.hatch.envs.lint.env-vars]
 DJANGO_SETTINGS_MODULE = "config.settings"
 DJANGO_ENVIRONMENT = "test"
-DJANGO_SECRET_KEY = "unsafe-test-only-secret"
+DJANGO_SECRET_KEY = "unsafe-test-only-secret-with-at-least-32-characters"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
@@ -102,6 +106,7 @@ markers = [
 filterwarnings = [
     "error",
     "ignore:.*remove_queries_from_warnings.*:DeprecationWarning:django.*",
+    "ignore:.*_UnionGenericAlias.*:DeprecationWarning",
 ]
 
 [tool.coverage.run]

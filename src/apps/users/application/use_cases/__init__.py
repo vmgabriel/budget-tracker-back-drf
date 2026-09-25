@@ -12,7 +12,6 @@ from apps.users.application.use_cases.change_user_plan import (
 from apps.users.application.use_cases.create_user import CreateUser, CreateUserCommand
 from apps.users.application.use_cases.get_user import GetUser
 from apps.users.application.use_cases.list_users import ListUsers
-from apps.users.application.use_cases.logout_user import LogoutUser
 
 __all__ = (
     "AdminUpdateUser",
@@ -24,5 +23,4 @@ __all__ = (
     "CreateUserCommand",
     "GetUser",
     "ListUsers",
-    "LogoutUser",
 )

@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-FORBIDDEN_DOMAIN_IMPORTS = {"celery", "django", "psycopg", "rest_framework"}
+FORBIDDEN_DOMAIN_IMPORTS = {
+    "celery",
+    "django",
+    "psycopg",
+    "rest_framework",
+    "rest_framework_simplejwt",
+}
 
 pytestmark = pytest.mark.unit
 

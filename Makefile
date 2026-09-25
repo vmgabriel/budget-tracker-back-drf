@@ -5,7 +5,7 @@ COMPOSE ?= docker compose
 ENV_FILE := .env
 
 .PHONY: help install check-env build up repair down stop logs migrate makemigrations migrations-check \
-	shell superuser test test-unit test-integration lint format check schema collectstatic clean
+	shell superuser token refresh-token test test-unit test-integration lint format check schema collectstatic clean
 
 help: ## Show the available commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -53,6 +53,29 @@ shell: check-env ## Open the Django shell inside the web container
 
 superuser: check-env ## Create an administrative user
 	$(COMPOSE) exec web python manage.py createsuperuser
+
+token: check-env ## Generate a JWT access and refresh token for a user
+	@read -p "Email: " email; \
+	$(COMPOSE) exec web python manage.py shell -c "\
+from django.contrib.auth import get_user_model;\
+from rest_framework_simplejwt.tokens import RefreshToken;\
+User = get_user_model();\
+user = User.objects.get(email='$$email');\
+refresh = RefreshToken.for_user(user);\
+print('ACCESS TOKEN:');\
+print(str(refresh.access_token));\
+print('REFRESH TOKEN:');\
+print(str(refresh));\
+"
+
+refresh-token: check-env ## Generate a new access token from a refresh token
+	@read -p "Refresh token: " token; \
+	$(COMPOSE) exec web python manage.py shell -c "\
+from rest_framework_simplejwt.tokens import RefreshToken;\
+refresh = RefreshToken('$$token');\
+print('NEW ACCESS TOKEN:');\
+print(str(refresh.access_token));\
+"
 
 test-unit: ## Run database-free unit tests locally with Hatch
 	@command -v hatch >/dev/null 2>&1 || { echo "Hatch is required: https://hatch.pypa.io/latest/install/"; exit 1; }

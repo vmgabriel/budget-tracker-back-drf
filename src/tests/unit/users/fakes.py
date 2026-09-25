@@ -59,19 +59,6 @@ class FakeClock:
         return FIXED_NOW.date()
 
 
-class FakeSession:
-    def __init__(self) -> None:
-        self.logged_in_id: UserId | None = None
-        self.logout_calls = 0
-
-    def login(self, user_id: UserId) -> None:
-        self.logged_in_id = user_id
-
-    def logout(self) -> None:
-        self.logged_in_id = None
-        self.logout_calls += 1
-
-
 def make_user(
     *,
     user_id: UUID | None = None,

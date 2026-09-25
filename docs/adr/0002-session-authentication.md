@@ -1,7 +1,10 @@
 # ADR-002: Session authentication for the first-party client
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-005
 - **Date:** 2026-09-24
+
+> This decision remains historical context. API authentication is now governed
+> by [ADR-005](005-use-jwt-authentication.md).
 
 ## Context
 

@@ -1,11 +1,15 @@
 """Factory-boy factories for integration tests."""
 
+from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
+from typing import Any, cast
 
 import factory
+import pytest
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.dashboard.domain.value_objects import Period
 from apps.dashboard.infrastructure.persistence.models import DashboardSummary
@@ -13,6 +17,17 @@ from apps.transactions.domain.value_objects import TransactionType
 from apps.transactions.infrastructure.persistence.models import Transaction
 
 User = get_user_model()
+
+
+@pytest.fixture
+def jwt_token_factory() -> Callable[[Any], str]:
+    """Return an access token factory for a persisted Django user."""
+
+    def _generate_token(user: Any) -> str:
+        refresh = cast(Any, RefreshToken.for_user(user))
+        return str(refresh.access_token)
+
+    return _generate_token
 
 
 class UserFactory(factory.django.DjangoModelFactory):

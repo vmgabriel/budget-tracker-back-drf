@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.dashboard.application.exceptions import InvalidDashboardQuery
 from apps.dashboard.application.use_cases import GetUserDashboardCommand
@@ -27,6 +28,7 @@ class DashboardOverviewView(APIView):
     """Return today's, this week's, and this month's persisted snapshots."""
 
     permission_classes = (IsAuthenticated,)
+    authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
         responses={status.HTTP_200_OK: DashboardOverviewSerializer, **ERROR_RESPONSES}
@@ -42,6 +44,7 @@ class DashboardView(APIView):
     """Return only persisted summaries; the HTTP read path performs no aggregation."""
 
     permission_classes = (IsAuthenticated,)
+    authentication_classes = (JWTAuthentication,)
     fixed_period: Period | None = None
 
     @extend_schema(

@@ -1,7 +1,6 @@
-"""Dependency-inversion ports for user use cases."""
+"""Application ports for the users bounded context."""
 
 from apps.users.application.ports.repositories import UserRepository
-from apps.users.application.ports.security import PasswordHasher, UserSession
-from shared.domain.ports.clock import Clock
+from apps.users.application.ports.security import PasswordHasher
 
-__all__ = ("Clock", "PasswordHasher", "UserRepository", "UserSession")
+__all__ = ("PasswordHasher", "UserRepository")

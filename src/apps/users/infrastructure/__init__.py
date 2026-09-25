@@ -1,1 +1,1 @@
-"""Django and session adapters for the users context."""
+"""Django infrastructure adapters for the users context."""

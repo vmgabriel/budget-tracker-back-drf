@@ -2,8 +2,6 @@
 
 from dataclasses import dataclass
 
-from django.http import HttpRequest
-
 from apps.users.application.use_cases import (
     AdminUpdateUser,
     AuthenticateUser,
@@ -11,11 +9,9 @@ from apps.users.application.use_cases import (
     CreateUser,
     GetUser,
     ListUsers,
-    LogoutUser,
 )
 from apps.users.infrastructure.persistence.repositories import DjangoUserRepository
 from apps.users.infrastructure.security import DjangoPasswordHasher
-from apps.users.infrastructure.sessions import DjangoUserSession
 from shared.infrastructure.clock import SystemClock
 
 
@@ -31,7 +27,6 @@ class UserUseCases:
 @dataclass(frozen=True, slots=True)
 class AuthenticationUseCases:
     authenticate: AuthenticateUser
-    logout: LogoutUser
 
 
 def build_user_use_cases() -> UserUseCases:
@@ -47,14 +42,9 @@ def build_user_use_cases() -> UserUseCases:
     )
 
 
-def build_authentication_use_cases(request: HttpRequest) -> AuthenticationUseCases:
+def build_authentication_use_cases() -> AuthenticationUseCases:
+    """Build credential validation services without a session dependency."""
     repository = DjangoUserRepository()
-    session = DjangoUserSession(request)
     return AuthenticationUseCases(
-        authenticate=AuthenticateUser(
-            repository,
-            DjangoPasswordHasher(),
-            session,
-        ),
-        logout=LogoutUser(session),
+        authenticate=AuthenticateUser(repository, DjangoPasswordHasher()),
     )

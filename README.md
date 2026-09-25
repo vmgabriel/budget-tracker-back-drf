@@ -2,7 +2,7 @@
 
 Budget Tracker is a containerized personal finance API built with Python 3.12+,
 Django 5.2, Django REST Framework, PostgreSQL, Redis, and Celery. The MVP is
-implemented end to end: email/password sessions, owner-scoped transactions,
+implemented end to end: JWT bearer authentication, owner-scoped transactions,
 and pre-computed daily, weekly, and monthly dashboard summaries.
 
 The code follows Domain-Driven Design and Clean Architecture. Business rules
@@ -16,7 +16,7 @@ those rules.
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
 - [API conventions](#api-conventions)
-- [Authentication and users](#authentication-and-users)
+- [Authentication](#authentication)
 - [Transactions](#transactions)
 - [Dashboard](#dashboard)
 - [Celery and aggregation workflow](#celery-and-aggregation-workflow)
@@ -32,8 +32,8 @@ those rules.
 ## Capabilities
 
 - UUID-based users with `free`, `pro`, and `premium` plans.
-- Django session authentication with CSRF protection for authenticated unsafe
-  requests.
+- JWT bearer authentication with one-hour access tokens and rotating seven-day
+  refresh tokens.
 - Password hashing and Django's standard password validators.
 - Owner-only transaction CRUD with pagination and date validation.
 - Transaction types: `income`, `expense`, `investment`, and `savings`.
@@ -125,7 +125,7 @@ make superuser               # optional; create a staff administrator
 The default endpoints are:
 
 - API base URL: <http://127.0.0.1:8000> (use the versioned routes below)
-- Swagger UI: <http://127.0.0.1:8000/api/schema/swagger-ui/>
+- Swagger UI: <http://127.0.0.1:8000/api/docs/> (legacy alias: <http://127.0.0.1:8000/api/schema/swagger-ui/>)
 - OpenAPI schema: <http://127.0.0.1:8000/api/schema/>
 - Liveness: <http://127.0.0.1:8000/healthz>
 - Readiness: <http://127.0.0.1:8000/readyz>
@@ -162,7 +162,7 @@ Important settings:
 | `DJANGO_SECRET_KEY` | Django signing key; use a long random value in production |
 | `DJANGO_DEBUG` | Must be `false` in production |
 | `DJANGO_ALLOWED_HOSTS` | Comma-separated host allowlist |
-| `DJANGO_CSRF_TRUSTED_ORIGINS` | Comma-separated HTTPS origins for browser clients |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | Optional origins retained for Django admin/browser surfaces |
 | `DJANGO_TIME_ZONE` | Application time zone; defaults to `UTC` |
 | `DATABASE_URL` | PostgreSQL URL for host-side commands |
 | `DOCKER_DATABASE_URL` | PostgreSQL URL used inside Compose |
@@ -174,8 +174,8 @@ Important settings:
 | `CELERY_TASK_ALWAYS_EAGER` | Run tasks synchronously; intended for tests only |
 | `DJANGO_LOG_QUERIES` | Optional local SQL debug cursor and query logger |
 | `DJANGO_SECURE_SSL_REDIRECT` | Redirect HTTP to HTTPS in production |
-| `DJANGO_SESSION_COOKIE_SECURE` | Mark the session cookie secure |
-| `DJANGO_CSRF_COOKIE_SECURE` | Mark the CSRF cookie secure |
+| `DJANGO_SESSION_COOKIE_SECURE` | Mark Django admin session cookies secure |
+| `DJANGO_CSRF_COOKIE_SECURE` | Mark Django admin CSRF cookies secure |
 | `DJANGO_TRUST_PROXY_HEADERS` | Trust `X-Forwarded-Proto` behind a controlled proxy |
 | `DJANGO_SECURE_HSTS_SECONDS` | Optional HTTP Strict Transport Security duration |
 
@@ -191,20 +191,26 @@ All versioned application routes are aggregated once by
 `src/apps/api/urls.py` and mounted under `/api/v1/`. JSON is the supported
 request and response format (non-JSON request media types receive `415`).
 Decimal monetary values are represented as JSON strings, for example
-`"42.50"`. The root `/api-auth/` routes are retained only
-for Django REST Framework's legacy browser login helpers; application clients
-should use the JSON authentication endpoints below.
+`"42.50"`. User authentication and management use the canonical
+`/api/v1/users/...` resource paths. Django's browser-only `/api-auth/` helpers
+are not part of the API.
 
-### Authentication
+### API authentication
 
-Protected endpoints use Django's opaque session cookie. There is no token in
-the URL and passwords are never returned by the API.
+Protected endpoints use JWT bearer authentication. Send the access token in
+the `Authorization` header; do not put tokens in URLs or query parameters:
 
-Unsafe requests made with an authenticated session must include the matching
-CSRF token in `X-CSRFToken`. The login response sets the CSRF cookie; browsers
-normally send the cookie automatically, while API clients should copy its
-value into the header. The default session lifetime is 14 days and is
-configurable with `DJANGO_SESSION_COOKIE_AGE`.
+```text
+Authorization: Bearer <access-token>
+```
+
+Access tokens expire after one hour. Refresh tokens expire after seven days
+and are rotated when used; the default deployment does not blacklist rotated
+tokens. API writes do not require a CSRF cookie or `X-CSRFToken` header.
+Django sessions remain enabled only for the Django admin and other explicitly
+session-based Django surfaces; API clients must not depend on those cookies.
+Existing API clients should migrate by exchanging their email/password for a
+token pair and then sending the access token on every subsequent request.
 
 ### Errors
 
@@ -231,12 +237,11 @@ are retained for backwards compatibility while clients migrate to `error`.
 Unexpected exceptions are logged and return a generic 500 response without
 internal details.
 
-Common status codes are `201` for creation, `204` for deletion/logout, `400`
-for invalid input (including invalid login credentials, by design), `403` for
-a missing session, CSRF failure, or insufficient permission, `404` for an
-unknown or non-owned resource, and `500` for an unexpected server failure.
-The current session authenticator does not issue a bearer challenge, so it
-returns `403` rather than `401` for a missing session. Clients should use the
+Common status codes are `201` for creation, `204` for deletion, `400` for
+invalid input, `401` for missing, expired, or invalid bearer credentials,
+`403` for insufficient permission, `404` for an unknown or non-owned resource,
+and `500` for an unexpected server failure. Invalid login credentials also
+return `401` with an `authentication_failed` error code. Clients should use the
 `error.code` value rather than infer semantics from a legacy field.
 
 ### Pagination
@@ -253,21 +258,17 @@ User and transaction list endpoints accept `page` (1–10,000) and `page_size`
 }
 ```
 
-## Authentication and users
+## Authentication
 
-The original short authentication paths are kept for compatibility, and
-resource-oriented nested aliases are also available:
+The user API exposes the following resource-oriented endpoints:
 
 | Method | Endpoint | Access | Purpose |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/auth/register/` | Public | Create an account |
-| `POST` | `/api/v1/auth/login/` | Public | Create a session |
-| `POST` | `/api/v1/auth/logout/` | Authenticated | End the session |
-| `GET` | `/api/v1/auth/me/` | Authenticated | Read the current user |
-| `POST` | `/api/v1/users/auth/register/` | Public | Nested alias for register |
-| `POST` | `/api/v1/users/auth/login/` | Public | Nested alias for login |
-| `POST` | `/api/v1/users/auth/logout/` | Authenticated | Nested alias for logout |
-| `GET` | `/api/v1/users/auth/me/` | Authenticated | Nested alias for profile |
+| `POST` | `/api/v1/users/auth/register/` | Public | Create an account |
+| `POST` | `/api/v1/users/auth/login/` | Public | Obtain an access/refresh pair |
+| `POST` | `/api/v1/users/auth/refresh/` | Public | Rotate tokens and obtain access |
+| `POST` | `/api/v1/users/auth/logout/` | Authenticated | Acknowledge client logout |
+| `GET` | `/api/v1/users/me/` | Authenticated | Read the current user |
 | `GET` | `/api/v1/users/` | Staff | List users |
 | `GET` | `/api/v1/users/{id}/` | Staff | Read a user |
 | `PATCH` | `/api/v1/users/{id}/` | Staff | Update email, name, or active state |
@@ -276,10 +277,9 @@ resource-oriented nested aliases are also available:
 ### Register
 
 ```bash
-curl -i -c cookies.txt \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"alex@example.com","full_name":"Alex Morgan","password":"StrongPassword123!"}' \
-  http://127.0.0.1:8000/api/v1/auth/register/
+curl -X POST http://127.0.0.1:8000/api/v1/users/auth/register/ \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alex@example.com","full_name":"Alex Morgan","password":"StrongPassword123!"}'
 ```
 
 Response (`201 Created`):
@@ -298,28 +298,60 @@ Response (`201 Created`):
 }
 ```
 
-### Login and session flow
+### Obtaining a token
 
 ```bash
-curl -i -c cookies.txt \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"alex@example.com","password":"StrongPassword123!"}' \
-  http://127.0.0.1:8000/api/v1/auth/login/
+curl -X POST http://127.0.0.1:8000/api/v1/users/auth/login/ \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"StrongPassword123!"}'
 ```
 
-The response is the same safe user representation and includes `Set-Cookie`
-headers for the session and CSRF cookies. For a command-line unsafe request,
-copy the `csrftoken` cookie value into the header:
+Response (`200 OK`):
+
+```json
+{
+  "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "user_id": "8e9c5c2e-0e5a-4ca2-b8c6-7d6e3c1c1f01",
+  "email": "user@example.com",
+  "full_name": "Alex Morgan"
+}
+```
+
+### Using and refreshing tokens
+
+Send the access token in the `Authorization` header:
 
 ```bash
-curl -i -b cookies.txt -c cookies.txt \
-  -H "X-CSRFToken: <csrftoken-cookie-value>" \
-  http://127.0.0.1:8000/api/v1/auth/me/
+curl -X GET http://127.0.0.1:8000/api/v1/transactions/ \
+  -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc..."
 ```
 
-`POST /api/v1/auth/logout/` requires the CSRF header and returns `204 No
-Content`. A client that loses its session receives the standard authentication
-error for protected endpoints.
+Refresh an expiring access token with the refresh token:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/users/auth/refresh/ \
+  -H "Content-Type: application/json" \
+  -d '{"refresh":"eyJ0eXAiOiJKV1QiLCJhbGc..."}'
+```
+
+The refresh response contains a new access token and, because refresh-token
+rotation is enabled, a new refresh token. This deployment does not install
+SimpleJWT's blacklist app, so logout is a client-side token discard and cannot
+invalidate already-issued tokens before they expire:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/users/auth/logout/ \
+  -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc..."
+```
+
+### Using Swagger UI
+
+1. Navigate to <http://127.0.0.1:8000/api/docs/>.
+2. Obtain a token from `/api/v1/users/auth/login/`.
+3. Click **Authorize** and enter the access token (the `Bearer` prefix is
+   supplied by the Swagger UI).
+4. Test protected endpoints; the token is persisted by the UI configuration.
 
 ### Staff user management
 
@@ -359,11 +391,10 @@ be no larger than `9999999999.99`. Dates cannot be in the future.
 ### Create
 
 ```bash
-curl -i -b cookies.txt -c cookies.txt \
+curl -X POST http://127.0.0.1:8000/api/v1/transactions/ \
   -H 'Content-Type: application/json' \
-  -H "X-CSRFToken: <csrftoken-cookie-value>" \
-  -d '{"amount":"42.50","transaction_type":"expense","category":"Food","date":"2026-01-15","description":"Lunch"}' \
-  http://127.0.0.1:8000/api/v1/transactions/
+  -H 'Authorization: Bearer <access-token>' \
+  -d '{"amount":"42.50","transaction_type":"expense","category":"Food","date":"2026-01-15","description":"Lunch"}'
 ```
 
 Response (`201 Created`):
@@ -409,8 +440,8 @@ current calendar period is used.
 Example:
 
 ```bash
-curl -b cookies.txt \
-  'http://127.0.0.1:8000/api/v1/dashboard/monthly/?start_date=2026-01-01&end_date=2026-03-31'
+curl 'http://127.0.0.1:8000/api/v1/dashboard/monthly/?start_date=2026-01-01&end_date=2026-03-31' \
+  -H 'Authorization: Bearer <access-token>'
 ```
 
 List response:
@@ -525,15 +556,14 @@ The document's API contract version is `1.0.0`; the package's MVP release
 version is `0.1.0`.
 
 - Schema YAML/JSON: <http://127.0.0.1:8000/api/schema/>
-- Swagger UI: <http://127.0.0.1:8000/api/schema/swagger-ui/>
+- Swagger UI: <http://127.0.0.1:8000/api/docs/> (legacy alias: <http://127.0.0.1:8000/api/schema/swagger-ui/>)
 
 The schema covers the versioned DRF API routes; health probes, Django admin,
-and the legacy `/api-auth/` browser helpers are intentionally outside the
+and the removed `/api-auth/` browser helpers are intentionally outside the
 OpenAPI document. In local/test environments the schema is public for
-discovery. Production schema and Swagger routes require a staff session by
-default. Session-authenticated calls from Swagger UI may be easier from a
-same-origin browser session; command-line clients should use the cookie flow
-shown above.
+discovery. Production schema and Swagger routes require a staff bearer token by
+default. The schema declares an HTTP `Bearer` security scheme, and the login
+and refresh operations are public.
 
 Regenerate/check the document during development with:
 
@@ -637,6 +667,7 @@ Useful Make targets include:
 | `make schema` | Validate and generate the OpenAPI document |
 | `make collectstatic` | Collect static files in the web container |
 | `make lint` / `make format` | Run or apply Python quality checks |
+| `make token` / `make refresh-token` | Generate JWTs from the running container |
 | `make test-unit` / `make test-integration` | Run the isolated test layers |
 | `make test` | Run both test layers |
 
@@ -663,24 +694,26 @@ the pre-computation boundary without measuring its effect on p95 latency.
 The current security posture includes:
 
 - Django password validators and one-way password hashing.
-- Session authentication with server-side sessions and secure-cookie settings
-  available for production.
-- CSRF enforcement for authenticated unsafe API requests.
+- Short-lived JWT access tokens and rotating refresh tokens.
 - Owner-scoped repositories that return not-found rather than cross-user data.
 - Staff-only user-management permissions.
 - Parameterized Django ORM queries; user input is never interpolated into SQL.
 - Generic 500 responses with server-side exception logging.
-- `ALLOWED_HOSTS`, trusted CSRF origins, HSTS, proxy-header, and content-type
-  protections in production settings.
+- `ALLOWED_HOSTS`, HSTS, proxy-header, and content-type protections in production
+  settings.
 
-Registration and login are intentionally public JSON endpoints and are exempt
-from the authenticated-session CSRF check; protect them with gateway throttling,
-origin controls, and abuse monitoring before exposing them publicly. All
-authenticated unsafe requests remain CSRF protected.
+JWT API requests use the `Authorization` header and do not require CSRF
+handling. Django session settings remain relevant to the separately served
+Django admin surface; do not use those cookies as API credentials.
+Registration and login are intentionally public JSON endpoints; protect them
+with gateway throttling, origin controls, and abuse monitoring before exposing
+them publicly. Logout cannot revoke a stateless token before its expiry, so
+clients must discard tokens and operators should use short access-token
+lifetimes and protected transport.
 
 Before an internet-facing deployment:
 
-1. Set a unique secret, `DJANGO_DEBUG=false`, HTTPS, secure cookies, and an
+1. Set a unique, stable signing secret, `DJANGO_DEBUG=false`, HTTPS, and an
    explicit host/origin allowlist.
 2. Put the web service behind a TLS-terminating reverse proxy and do not expose
    PostgreSQL or Redis publicly.
@@ -716,12 +749,9 @@ Set at minimum:
 ```text
 DJANGO_ENVIRONMENT=production
 DJANGO_DEBUG=false
-DJANGO_SECRET_KEY=<long random secret>
+DJANGO_SECRET_KEY=<long random secret; keep stable while JWTs are valid>
 DJANGO_ALLOWED_HOSTS=api.example.com
-DJANGO_CSRF_TRUSTED_ORIGINS=https://app.example.com
 DJANGO_SECURE_SSL_REDIRECT=true
-DJANGO_SESSION_COOKIE_SECURE=true
-DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_TRUST_PROXY_HEADERS=true
 DJANGO_LOG_QUERIES=false
 DATABASE_URL=postgresql://...
@@ -799,9 +829,11 @@ Significant decisions should be recorded under `docs/adr/` using this format:
 - Alternatives: What was considered and rejected?
 ```
 
-The current baseline decisions are: session authentication for the first-party
-web client, explicit four-layer Clean Architecture, pre-computed dashboard
-snapshots, and natural-key idempotency for asynchronous work.
+The current baseline decisions are: JWT bearer authentication for API clients
+(ADR-005), explicit four-layer Clean Architecture, pre-computed dashboard
+snapshots, and natural-key idempotency for asynchronous work. ADR-002 records
+the original session-based MVP decision and is superseded by ADR-005 for API
+clients.
 
 ## Troubleshooting
 
@@ -826,12 +858,14 @@ signal-aware workflow. Bulk APIs bypass model signals; use the scheduled
 reconciliation task for current periods and a controlled backfill procedure for
 historical ranges. For a deterministic local dataset, run `create_sample_data`.
 
-### CSRF failures in a browser/API client
+### JWT authentication failures
 
-Confirm that the client retains the `csrftoken` cookie and sends its value in
-`X-CSRFToken` on `POST`, `PATCH`, and `DELETE` requests after login. In local
-development, use the exact origin in `DJANGO_CSRF_TRUSTED_ORIGINS` when using a
-proxy or alternate host.
+Confirm that the client sends `Authorization: Bearer <access-token>` (with one
+space and the exact `Bearer` capitalization), that the access token has not
+expired, and that the signing key is identical across web replicas. Use the
+refresh endpoint to obtain a new access token; do not send the refresh token as
+an access token. A `401` response includes the stable `not_authenticated` or
+`authentication_failed` error code.
 
 ### Local tests cannot connect
 

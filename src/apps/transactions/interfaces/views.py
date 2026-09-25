@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.api.serializers import PaginationQuerySerializer
 from apps.transactions.application.exceptions import InvalidTransactionInput
@@ -51,6 +52,7 @@ class TransactionListCreateView(APIView):
     """List the authenticated user's transactions or create one."""
 
     permission_classes = (IsAuthenticated,)
+    authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
         operation_id="transactions_list",
@@ -124,6 +126,7 @@ class TransactionDetailView(APIView):
     """Retrieve, update, or delete one transaction owned by the current user."""
 
     permission_classes = (IsAuthenticated,)
+    authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
         operation_id="transactions_retrieve",
@@ -185,3 +188,8 @@ class TransactionDetailView(APIView):
         except TransactionNotFound as error:
             raise _translate_transaction_error(error) from error
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# Compatibility names for clients that refer to the HTTP controllers directly.
+CreateTransactionView = TransactionListCreateView
+ListTransactionsView = TransactionListCreateView
