@@ -15,10 +15,6 @@ from apps.profile.domain.value_objects import (
     UserId,
 )
 
-_DEFAULT_TIMEZONE = Timezone("UTC")
-_DEFAULT_LANGUAGE = Language("es")
-_DEFAULT_CURRENCY = Currency("USD")
-
 
 @dataclass(eq=False, slots=True)
 class Profile:
@@ -42,15 +38,15 @@ class Profile:
         *,
         user_id: UserId,
         full_name: FullName,
+        timezone: Timezone,
+        language: Language,
+        currency: Currency,
+        date_format: DateFormat,
         now: datetime,
-        timezone: Timezone = _DEFAULT_TIMEZONE,
-        language: Language = _DEFAULT_LANGUAGE,
-        currency: Currency = _DEFAULT_CURRENCY,
-        date_format: DateFormat = DateFormat.ISO,
         avatar_url: AvatarUrl | None = None,
         bio: Bio | None = None,
     ) -> "Profile":
-        """Create a profile applying the default regional preferences."""
+        """Create a profile with validated regional preferences."""
         if not isinstance(date_format, DateFormat):
             raise ValueError("Date format is invalid.")
         cls._require_aware(now)

@@ -9,4 +9,5 @@ urlpatterns = [
     path("users/", include("apps.users.interfaces.urls")),
     path("transactions/", include("apps.transactions.interfaces.urls")),
     path("dashboard/", include("apps.dashboard.interfaces.urls")),
+    path("profile/", include("apps.profile.interfaces.urls")),
 ]

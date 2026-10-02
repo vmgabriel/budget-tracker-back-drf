@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     "apps.users.apps.UsersConfig",
     "apps.transactions.apps.TransactionsConfig",
     "apps.dashboard.apps.DashboardConfig",
+    "apps.profile.apps.ProfileConfig",
 ]
 
 MIDDLEWARE = [
