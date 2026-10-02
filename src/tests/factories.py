@@ -13,6 +13,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.dashboard.domain.value_objects import Period
 from apps.dashboard.infrastructure.persistence.models import DashboardSummary
+from apps.profile.application.config import PROFILE_DEFAULTS
+from apps.profile.infrastructure.persistence.models import ProfileModel
 from apps.transactions.domain.value_objects import TransactionType
 from apps.transactions.infrastructure.persistence.models import Transaction
 
@@ -87,3 +89,37 @@ class DashboardSummaryFactory(factory.django.DjangoModelFactory):
     is_stale = False
     generated_at = factory.LazyFunction(timezone.now)
     stale_at = None
+
+
+class ProfileFactory(factory.django.DjangoModelFactory):
+    """Customize the profile auto-provisioned for a new user.
+
+    The ``post_save`` signal provisions a profile for every created user, so
+    this factory updates that row with the declared attributes instead of
+    inserting a duplicate that would violate the one-to-one constraint.
+    """
+
+    class Meta:
+        model = ProfileModel
+
+    user = factory.SubFactory(UserFactory)
+    first_name = factory.Sequence(lambda number: f"Profile {number}")
+    last_name = "Owner"
+    timezone = PROFILE_DEFAULTS.timezone.value
+    language = PROFILE_DEFAULTS.language.value
+    currency = PROFILE_DEFAULTS.currency.value
+    date_format = PROFILE_DEFAULTS.date_format.value
+    avatar_url = None
+    bio = None
+
+    @classmethod
+    def _create(
+        cls, model_class: type[ProfileModel], *args: Any, **kwargs: Any
+    ) -> ProfileModel:
+        del args
+        user = kwargs.pop("user")
+        profile = model_class.objects.get(user=user)
+        for field, value in kwargs.items():
+            setattr(profile, field, value)
+        profile.save()
+        return profile
