@@ -5,7 +5,8 @@ COMPOSE ?= docker compose
 ENV_FILE := .env
 
 .PHONY: help install check-env build up repair down stop logs migrate makemigrations migrations-check \
-	shell superuser token refresh-token test test-unit test-integration lint format check schema collectstatic clean
+	shell superuser token refresh-token backfill-profiles test test-unit test-integration lint format \
+	check schema collectstatic clean
 
 help: ## Show the available commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -76,6 +77,9 @@ refresh = RefreshToken('$$token');\
 print('NEW ACCESS TOKEN:');\
 print(str(refresh.access_token));\
 "
+
+backfill-profiles: check-env ## Provision profiles for users missing one inside the web container
+	$(COMPOSE) exec web python manage.py backfill_profiles
 
 test-unit: ## Run database-free unit tests locally with Hatch
 	@command -v hatch >/dev/null 2>&1 || { echo "Hatch is required: https://hatch.pypa.io/latest/install/"; exit 1; }

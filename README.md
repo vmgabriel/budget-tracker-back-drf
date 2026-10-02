@@ -19,6 +19,7 @@ those rules.
 - [Authentication](#authentication)
 - [Transactions](#transactions)
 - [Dashboard](#dashboard)
+- [Profile & Settings](#profile--settings)
 - [Celery and aggregation workflow](#celery-and-aggregation-workflow)
 - [OpenAPI and Swagger](#openapi-and-swagger)
 - [Sample data](#sample-data)
@@ -43,6 +44,8 @@ those rules.
 - Idempotent Celery tasks with retries for transient database failures.
 - Owner-scoped dashboard reads that never aggregate financial data on the HTTP
   request path.
+- Auto-provisioned per-user profiles with timezone, language, currency, and
+  date-format preferences.
 - OpenAPI 3 schema and Swagger UI.
 - Health/readiness probes, structured error metadata, and optional local SQL
   query logging.
@@ -500,6 +503,73 @@ Any overview slot may be `null` while its first snapshot is being generated.
   affected snapshots stale, after which a worker can safely replace them.
 - `investment` and `savings` are valid transaction types but intentionally do
   not contribute to `total_income` or `total_expense` in this MVP.
+
+## Profile & Settings
+
+Every account owns exactly one profile with personal details and regional
+preferences. Profiles are provisioned automatically when a user registers: a
+`post_save` signal copies the account name and applies the configured
+defaults (`UTC`, `es`, `USD`, `YYYY-MM-DD`), so these endpoints always return
+data for authenticated users. All of them require JWT bearer authentication
+(`Authorization: Bearer <access-token>`).
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/profile/me/` | Read the current user's profile |
+| `PATCH` | `/api/v1/profile/me/` | Update name, timezone, avatar, or bio |
+| `PATCH` | `/api/v1/profile/me/preferences/` | Update language, currency, or date format |
+
+Both patch endpoints accept partial payloads; omitted fields stay unchanged
+and empty payloads are rejected. `avatar_url` and `bio` are cleared by
+sending an empty string. Field rules: `timezone` must be a valid IANA name
+such as `America/Bogota`, `language` an ISO 639-1 code such as `en` or `pt`,
+`currency` an ISO 4217 code such as `USD` or `COP`, and `date_format` one of
+`YYYY-MM-DD`, `DD/MM/YYYY`, or `MM/DD/YYYY`. `bio` is limited to 500
+characters.
+
+Update details:
+
+```bash
+curl -X PATCH http://127.0.0.1:8000/api/v1/profile/me/ \
+  -H 'Authorization: Bearer <access-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"first_name": "Ana", "timezone": "America/Bogota", "bio": "Keeps a budget."}'
+```
+
+Response:
+
+```json
+{
+  "id": "b3f0c2d4-1a2b-4c5d-8e9f-0a1b2c3d4e5f",
+  "first_name": "Ana",
+  "last_name": "Garcia",
+  "timezone": "America/Bogota",
+  "language": "es",
+  "currency": "USD",
+  "date_format": "YYYY-MM-DD",
+  "avatar_url": null,
+  "bio": "Keeps a budget.",
+  "created_at": "2026-01-15T12:00:00Z",
+  "updated_at": "2026-01-16T09:30:00Z"
+}
+```
+
+Update preferences:
+
+```bash
+curl -X PATCH http://127.0.0.1:8000/api/v1/profile/me/preferences/ \
+  -H 'Authorization: Bearer <access-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"language": "pt", "currency": "COP", "date_format": "DD/MM/YYYY"}'
+```
+
+Users created before the profile module existed have no profile row. The
+idempotent backfill command provisions them using the same defaults as the
+registration signal and reports how many were created:
+
+```bash
+make backfill-profiles
+```
 
 ## Celery and aggregation workflow
 
