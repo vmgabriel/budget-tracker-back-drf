@@ -490,9 +490,9 @@ Any overview slot may be `null` while its first snapshot is being generated.
 
 ### Aggregation rules
 
-- Business dates and the `SystemClock` use UTC; set `DJANGO_TIME_ZONE` only for
-  presentation/localization and do not change the worker date contract without
-  introducing an explicit timezone-aware clock.
+- Business dates are anchored to each user's `Profile.timezone` local calendar
+  (UTC system time is converted via `utc_to_local_date`); `SystemClock` keeps
+  returning UTC. Set `DJANGO_TIME_ZONE` only for presentation/localization.
 - Daily totals sum only `income` and `expense` transaction amounts.
 - Weekly periods are ISO weeks beginning Monday and ending Sunday.
 - Monthly periods are calendar months; weeks crossing a month boundary are

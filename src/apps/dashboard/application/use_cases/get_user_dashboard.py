@@ -7,7 +7,12 @@ from uuid import UUID
 from apps.dashboard.application.dto import DashboardData
 from apps.dashboard.application.exceptions import InvalidDashboardQuery
 from apps.dashboard.application.ports.repositories import DashboardSummaryRepository
-from apps.dashboard.domain.value_objects import Period, SummaryDate
+from apps.dashboard.domain.value_objects import (
+    Period,
+    SummaryDate,
+    is_valid_timezone,
+    utc_to_local_date,
+)
 from shared.domain.ports.clock import Clock
 
 MAX_DASHBOARD_RANGE_DAYS = 366
@@ -21,6 +26,7 @@ class GetUserDashboardCommand:
     period: Period
     start_date: Date | None = None
     end_date: Date | None = None
+    user_timezone: str = "UTC"
 
 
 class GetUserDashboard:
@@ -40,9 +46,11 @@ class GetUserDashboard:
             raise InvalidDashboardQuery("Dashboard period is invalid.")
         if not isinstance(command.user_id, UUID):
             raise InvalidDashboardQuery("Dashboard owner is invalid.")
+        if not is_valid_timezone(command.user_timezone):
+            raise InvalidDashboardQuery("Dashboard timezone is invalid.")
 
         period = command.period
-        today = SummaryDate(self._clock.today())
+        today = SummaryDate(utc_to_local_date(self._clock.now(), command.user_timezone))
         raw_start, raw_end = self._resolve_dates(command, period, today)
         start = period.start(SummaryDate(raw_start))
         end = period.end(SummaryDate(raw_end))

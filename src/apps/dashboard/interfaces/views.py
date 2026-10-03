@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+from django.core.exceptions import ObjectDoesNotExist
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -36,7 +37,8 @@ class DashboardOverviewView(APIView):
     )
     def get(self, request: Request) -> Response:
         result = build_dashboard_use_cases().overview.execute(
-            _authenticated_user_id(request)
+            _authenticated_user_id(request),
+            _user_timezone(request),
         )
         return Response(DashboardOverviewSerializer(result).data)
 
@@ -75,6 +77,7 @@ class DashboardView(APIView):
                     period=period,
                     start_date=data.get("start_date"),
                     end_date=data.get("end_date"),
+                    user_timezone=_user_timezone(request),
                 )
             )
         except InvalidDashboardQuery as error:
@@ -101,3 +104,12 @@ def _authenticated_user_id(request: Request) -> UUID:
     if not isinstance(user_id, UUID):
         raise ValidationError({"detail": "Authenticated identity is invalid."})
     return user_id
+
+
+def _user_timezone(request: Request) -> str:
+    try:
+        profile = request.user.profile
+    except (ObjectDoesNotExist, AttributeError):
+        return "UTC"
+    timezone = getattr(profile, "timezone", None)
+    return timezone if isinstance(timezone, str) and timezone else "UTC"

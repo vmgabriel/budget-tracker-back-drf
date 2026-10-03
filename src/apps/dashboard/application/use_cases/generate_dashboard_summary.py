@@ -19,6 +19,8 @@ from apps.dashboard.domain.value_objects import (
     SummaryDate,
     TotalExpense,
     TotalIncome,
+    is_valid_timezone,
+    utc_to_local_date,
 )
 from shared.domain.ports.clock import Clock
 
@@ -30,6 +32,7 @@ class GenerateDashboardSummaryCommand:
     user_id: UUID
     period: Period
     summary_date: Date
+    user_timezone: str = "UTC"
 
 
 class GenerateDashboardSummary:
@@ -58,8 +61,11 @@ class GenerateDashboardSummary:
             command.summary_date, datetime
         ):
             raise InvalidDashboardCommand("Dashboard summary date is invalid.")
+        if not is_valid_timezone(command.user_timezone):
+            raise InvalidDashboardCommand("Dashboard timezone is invalid.")
 
         period = command.period
+        local_today = utc_to_local_date(self._clock.now(), command.user_timezone)
         summary_date = period.start(SummaryDate(command.summary_date))
         if period is Period.DAILY:
             totals = self._transaction_repository.aggregate_totals(
@@ -72,12 +78,14 @@ class GenerateDashboardSummary:
             totals, is_complete = self._weekly_totals(
                 command.user_id,
                 summary_date,
+                local_today,
             )
             is_stale = not is_complete
         else:
             totals, is_complete = self._monthly_totals(
                 command.user_id,
                 summary_date,
+                local_today,
             )
             is_stale = not is_complete
 
@@ -109,9 +117,10 @@ class GenerateDashboardSummary:
         self,
         user_id: UUID,
         summary_date: SummaryDate,
+        today: Date,
     ) -> tuple[PeriodTotals, bool]:
         end = Period.WEEKLY.end(summary_date)
-        expected_through = min(end.value, self._clock.today())
+        expected_through = min(end.value, today)
         daily = self._summary_repository.list_for_user(
             user_id,
             Period.DAILY,
@@ -137,9 +146,9 @@ class GenerateDashboardSummary:
         self,
         user_id: UUID,
         summary_date: SummaryDate,
+        today: Date,
     ) -> tuple[PeriodTotals, bool]:
         month_end = Period.MONTHLY.end(summary_date)
-        today = self._clock.today()
         first_week = summary_date.value - timedelta(days=summary_date.value.weekday())
         last_week = month_end.value - timedelta(days=month_end.value.weekday())
         weekly = self._summary_repository.list_for_user(

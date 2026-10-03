@@ -18,11 +18,12 @@ from apps.dashboard.application.use_cases import (
     InvalidateUserCache,
     InvalidateUserCacheCommand,
 )
-from apps.dashboard.domain.value_objects import Period, SummaryDate
+from apps.dashboard.domain.value_objects import Period, SummaryDate, utc_to_local_date
 from apps.dashboard.infrastructure.persistence.repositories import (
     DjangoDashboardSummaryRepository,
     DjangoTransactionReadRepository,
 )
+from apps.profile.infrastructure.persistence.models import ProfileModel
 from shared.domain.ports.clock import Clock
 from shared.infrastructure.clock import SystemClock
 
@@ -51,7 +52,6 @@ def reconcile_user_dashboards(self: Any) -> dict[str, object]:
     Each enqueued monthly task performs the normal daily and weekly rollups.
     """
     clock = SystemClock()
-    today = clock.today()
     user_model = apps.get_model("users", "User")
     user_ids = list(
         user_model.objects.filter(is_active=True).values_list("pk", flat=True)
@@ -60,19 +60,22 @@ def reconcile_user_dashboards(self: Any) -> dict[str, object]:
     for user_id in user_ids:
         # The monthly task rebuilds every daily row needed by the current
         # month, then rolls those rows up to the current week in one job.
-        generate_monthly_summary.delay(str(user_id), today.isoformat())
+        # Use each user's local calendar day, not the UTC day.
+        timezone = _get_user_timezone(user_id)
+        local_today = utc_to_local_date(clock.now(), timezone)
+        generate_monthly_summary.delay(str(user_id), local_today.isoformat())
         enqueued += 1
     logger.info(
         "dashboard reconciliation finished users=%s jobs=%s through=%s task_id=%s",
         len(user_ids),
         enqueued,
-        today,
+        clock.now().isoformat(),
         self.request.id,
     )
     return {
         "users": len(user_ids),
         "jobs_enqueued": enqueued,
-        "through": today.isoformat(),
+        "through": clock.now().date().isoformat(),
     }
 
 
@@ -161,7 +164,9 @@ def generate_daily_summary(
     clock = SystemClock()
     if not _user_exists(parsed_user_id):
         return _skipped_result(parsed_user_id, Period.DAILY, summary_date)
-    if summary_date > clock.today():
+    user_timezone = _get_user_timezone(parsed_user_id)
+    local_today = utc_to_local_date(clock.now(), user_timezone)
+    if summary_date > local_today:
         return _skipped_result(parsed_user_id, Period.DAILY, summary_date)
 
     use_cases = _build_use_cases(clock)
@@ -182,6 +187,7 @@ def generate_daily_summary(
                 parsed_user_id,
                 Period.DAILY,
                 summary_date,
+                user_timezone,
             )
         )
         transaction.on_commit(
@@ -225,14 +231,16 @@ def generate_weekly_summary(
     clock = SystemClock()
     if not _user_exists(parsed_user_id):
         return _skipped_result(parsed_user_id, Period.WEEKLY, summary_date.value)
-    if summary_date.value > clock.today():
+    user_timezone = _get_user_timezone(parsed_user_id)
+    local_today = utc_to_local_date(clock.now(), user_timezone)
+    if summary_date.value > local_today:
         return _skipped_result(parsed_user_id, Period.WEEKLY, summary_date.value)
 
     use_cases = _build_use_cases(clock)
     affected_dates = _dates_through_today(
         summary_date.value,
         Period.WEEKLY.end(summary_date).value,
-        clock.today(),
+        local_today,
     )
     logger.info(
         "dashboard weekly generation started user_id=%s date=%s task_id=%s",
@@ -256,6 +264,7 @@ def generate_weekly_summary(
                     parsed_user_id,
                     Period.DAILY,
                     affected_date,
+                    user_timezone,
                 )
             )
         summary = use_cases.generate.execute(
@@ -263,6 +272,7 @@ def generate_weekly_summary(
                 parsed_user_id,
                 Period.WEEKLY,
                 summary_date.value,
+                user_timezone,
             )
         )
         transaction.on_commit(
@@ -306,7 +316,9 @@ def generate_monthly_summary(
     clock = SystemClock()
     if not _user_exists(parsed_user_id):
         return _skipped_result(parsed_user_id, Period.MONTHLY, summary_date.value)
-    if summary_date.value > clock.today():
+    user_timezone = _get_user_timezone(parsed_user_id)
+    local_today = utc_to_local_date(clock.now(), user_timezone)
+    if summary_date.value > local_today:
         return _skipped_result(parsed_user_id, Period.MONTHLY, summary_date.value)
 
     use_cases = _build_use_cases(clock)
@@ -314,13 +326,13 @@ def generate_monthly_summary(
     affected_dates = _dates_through_today(
         summary_date.value,
         month_end,
-        clock.today(),
+        local_today,
     )
     first_week = summary_date.value - timedelta(days=summary_date.value.weekday())
     affected_weeks = _dates_through_today(
         first_week,
         month_end,
-        clock.today(),
+        local_today,
         step=timedelta(days=7),
     )
     rollup_dates = set(affected_dates)
@@ -329,7 +341,7 @@ def generate_monthly_summary(
             _dates_through_today(
                 affected_week,
                 affected_week + timedelta(days=6),
-                clock.today(),
+                local_today,
             )
         )
     ordered_rollup_dates = tuple(sorted(rollup_dates))
@@ -364,6 +376,7 @@ def generate_monthly_summary(
                     parsed_user_id,
                     Period.DAILY,
                     affected_date,
+                    user_timezone,
                 )
             )
         for affected_week in affected_weeks:
@@ -372,6 +385,7 @@ def generate_monthly_summary(
                     parsed_user_id,
                     Period.WEEKLY,
                     affected_week,
+                    user_timezone,
                 )
             )
         summary = use_cases.generate.execute(
@@ -379,6 +393,7 @@ def generate_monthly_summary(
                 parsed_user_id,
                 Period.MONTHLY,
                 summary_date.value,
+                user_timezone,
             )
         )
     result = _summary_result(
@@ -429,6 +444,13 @@ def _dates_through_today(
 def _user_exists(user_id: UUID) -> bool:
     user_model = apps.get_model("users", "User")
     return bool(user_model.objects.filter(pk=user_id).exists())
+
+
+def _get_user_timezone(user_id: UUID) -> str:
+    profile = ProfileModel.objects.filter(user_id=user_id).only("timezone").first()
+    if profile is None or not profile.timezone:
+        return "UTC"
+    return profile.timezone
 
 
 def _lock_user(user_id: UUID) -> bool:

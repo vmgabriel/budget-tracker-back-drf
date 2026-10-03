@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 CENT = Decimal("0.01")
 MAX_DASHBOARD_AMOUNT = Decimal("9999999999999999.99")
@@ -53,6 +54,28 @@ PERIOD_CHOICES: tuple[tuple[str, str], ...] = tuple(
 )
 
 
+def is_valid_timezone(timezone_str: str) -> bool:
+    """Return whether the string names a valid IANA timezone."""
+    if not isinstance(timezone_str, str) or not timezone_str:
+        return False
+    try:
+        ZoneInfo(timezone_str)
+    except (ZoneInfoNotFoundError, ValueError, KeyError):
+        return False
+    return True
+
+
+def utc_to_local_date(utc_dt: datetime, timezone_str: str) -> date:
+    """Convert a timezone-aware UTC datetime to the user's local calendar date."""
+    if utc_dt.tzinfo is None or utc_dt.utcoffset() is None:
+        raise ValueError("utc_dt must be timezone-aware.")
+    try:
+        local = utc_dt.astimezone(ZoneInfo(timezone_str))
+    except (ZoneInfoNotFoundError, ValueError, KeyError) as error:
+        raise ValueError(f"Unknown timezone: {timezone_str!r}") from error
+    return local.date()
+
+
 def _decimal_amount(value: Decimal) -> Decimal:
     if isinstance(value, bool):
         raise ValueError("Dashboard amounts must be valid decimal values.")
@@ -92,7 +115,7 @@ class SummaryId:
 
 @dataclass(frozen=True, slots=True)
 class SummaryDate:
-    """A calendar date used as a period anchor."""
+    """A calendar date used as a period anchor in the user's local timezone."""
 
     value: date
 

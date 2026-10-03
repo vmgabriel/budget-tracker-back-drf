@@ -109,7 +109,9 @@ class Command(BaseCommand):
                 )
 
             for user in users:
-                self._regenerate_summaries(user.id, start, today, clock)
+                profile = getattr(user, "profile", None)
+                timezone = getattr(profile, "timezone", None) or "UTC"
+                self._regenerate_summaries(user.id, start, today, clock, timezone)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -181,6 +183,7 @@ class Command(BaseCommand):
         start: date,
         today: date,
         clock: SystemClock,
+        user_timezone: str = "UTC",
     ) -> None:
         repository = DjangoDashboardSummaryRepository()
         invalidate = InvalidateUserCache(repository, clock)
@@ -195,17 +198,23 @@ class Command(BaseCommand):
 
         for summary_date in dates:
             generate.execute(
-                GenerateDashboardSummaryCommand(user_id, Period.DAILY, summary_date)
+                GenerateDashboardSummaryCommand(
+                    user_id, Period.DAILY, summary_date, user_timezone
+                )
             )
 
         for week_start in _date_range(first_week, today, step=timedelta(days=7)):
             generate.execute(
-                GenerateDashboardSummaryCommand(user_id, Period.WEEKLY, week_start)
+                GenerateDashboardSummaryCommand(
+                    user_id, Period.WEEKLY, week_start, user_timezone
+                )
             )
 
         for month_start in _month_starts(start, today):
             generate.execute(
-                GenerateDashboardSummaryCommand(user_id, Period.MONTHLY, month_start)
+                GenerateDashboardSummaryCommand(
+                    user_id, Period.MONTHLY, month_start, user_timezone
+                )
             )
 
 

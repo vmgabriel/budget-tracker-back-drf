@@ -52,7 +52,9 @@ def test_reassignment_invalidates_both_previous_and_new_owners() -> None:
         transaction.user = new_owner
         transaction.save(update_fields=("user", "updated_at"))
 
-    assert {(item.args[0], tuple(item.args[1])) for item in delay.call_args_list} == {
-        (str(previous_owner.id), ("2025-01-15",)),
-        (str(new_owner.id), ("2025-01-15",)),
+    assert {
+        (item.args[0], frozenset(item.args[1])) for item in delay.call_args_list
+    } == {
+        (str(previous_owner.id), frozenset({"2025-01-15", date.today().isoformat()})),
+        (str(new_owner.id), frozenset({"2025-01-15", date.today().isoformat()})),
     }

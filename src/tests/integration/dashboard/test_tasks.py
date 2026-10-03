@@ -233,3 +233,30 @@ def test_transient_database_errors_are_retried() -> None:
     assert mark_stale.call_count == 1
     retry.assert_called_once()
     assert isinstance(retry.call_args.kwargs["exc"], OperationalError)
+
+
+@freeze_time("2025-01-15 02:00:00")
+def test_daily_task_uses_profile_timezone_for_local_today() -> None:
+    user: Any = UserFactory()
+    user.profile.timezone = "America/Bogota"
+    user.profile.save()
+    Transaction.objects.create(
+        user=user,
+        amount=Decimal("10.00"),
+        transaction_type="expense",
+        category="Food",
+        date=date(2025, 1, 14),
+    )
+
+    # 2025-01-15 is UTC "today" but still 2025-01-14 in Bogotá, so the
+    # summary for 2025-01-15 must be skipped for that user.
+    skipped = generate_daily_summary.run(str(user.id), "2025-01-15")
+    assert skipped["skipped"] is True
+
+    result = generate_daily_summary.run(str(user.id), "2025-01-14")
+    assert result["period"] == "daily"
+    assert result["date"] == "2025-01-14"
+    summary = DashboardSummary.objects.get(
+        user=user, period="daily", date=date(2025, 1, 14)
+    )
+    assert summary.total_expense == Decimal("10.00")

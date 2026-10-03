@@ -21,7 +21,10 @@ from apps.dashboard.domain.value_objects import (
 
 @dataclass(frozen=True, slots=True)
 class DashboardSummary:
-    """An immutable snapshot of one user's totals for a calendar period."""
+    """An immutable snapshot of one user's totals for a calendar period.
+
+    ``summary_date`` is anchored to the user's local calendar date, not UTC.
+    """
 
     user_id: UUID
     period: Period

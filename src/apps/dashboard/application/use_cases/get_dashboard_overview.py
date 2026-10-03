@@ -7,7 +7,12 @@ from apps.dashboard.application.dto import DashboardOverview
 from apps.dashboard.application.exceptions import InvalidDashboardQuery
 from apps.dashboard.application.ports.repositories import DashboardSummaryRepository
 from apps.dashboard.domain.entities import DashboardSummary
-from apps.dashboard.domain.value_objects import Period, SummaryDate
+from apps.dashboard.domain.value_objects import (
+    Period,
+    SummaryDate,
+    is_valid_timezone,
+    utc_to_local_date,
+)
 from shared.domain.ports.clock import Clock
 
 
@@ -22,12 +27,14 @@ class GetDashboardOverview:
         self._repository = repository
         self._clock = clock
 
-    def execute(self, user_id: UUID) -> DashboardOverview:
+    def execute(self, user_id: UUID, user_timezone: str) -> DashboardOverview:
         """Return current snapshots, using null for data still being generated."""
         if not isinstance(user_id, UUID):
             raise InvalidDashboardQuery("Dashboard owner is invalid.")
+        if not is_valid_timezone(user_timezone):
+            raise InvalidDashboardQuery("Dashboard timezone is invalid.")
 
-        today = self._clock.today()
+        today = utc_to_local_date(self._clock.now(), user_timezone)
         return DashboardOverview(
             as_of_date=today,
             today=self._get_current(user_id, Period.DAILY, today),

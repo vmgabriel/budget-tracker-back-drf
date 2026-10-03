@@ -83,7 +83,7 @@ def test_overview_reads_current_precomputed_snapshots_only() -> None:
         )
     )
 
-    result = GetDashboardOverview(repository, FakeClock()).execute(user_id)
+    result = GetDashboardOverview(repository, FakeClock()).execute(user_id, "UTC")
 
     assert result.as_of_date == date(2025, 1, 15)
     assert result.today is not None
