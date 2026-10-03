@@ -6,6 +6,7 @@ from apps.users.application.ports.repositories import UserRepository
 from apps.users.domain.entities import User
 from apps.users.domain.exceptions import EmailAlreadyExists, UserNotFound
 from apps.users.domain.value_objects import (
+    BanReason,
     Email,
     FullName,
     PasswordHash,
@@ -45,6 +46,8 @@ class DjangoUserRepository(UserRepository):
         model.full_name = user.full_name.value
         model.plan = user.plan.value
         model.is_active = user.is_active
+        model.is_banned = user.is_banned
+        model.ban_reason = user.ban_reason.value if user.ban_reason else None
         try:
             with transaction.atomic():
                 model.save(
@@ -53,6 +56,8 @@ class DjangoUserRepository(UserRepository):
                         "full_name",
                         "plan",
                         "is_active",
+                        "is_banned",
+                        "ban_reason",
                         "updated_at",
                     )
                 )
@@ -77,6 +82,8 @@ class DjangoUserRepository(UserRepository):
             is_active=user.is_active,
             is_staff=user.is_staff,
             is_superuser=user.is_superuser,
+            is_banned=user.is_banned,
+            ban_reason=user.ban_reason.value if user.ban_reason else None,
         )
 
     @staticmethod
@@ -92,4 +99,6 @@ class DjangoUserRepository(UserRepository):
             is_superuser=model.is_superuser,
             created_at=model.date_joined,
             updated_at=model.updated_at,
+            is_banned=model.is_banned,
+            ban_reason=BanReason(model.ban_reason) if model.ban_reason else None,
         )

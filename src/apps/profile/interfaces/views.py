@@ -25,6 +25,7 @@ from apps.profile.interfaces.serializers import (
     UpdatePreferencesSerializer,
     UpdateProfileSerializer,
 )
+from apps.users.interfaces.permissions import IsNotBanned
 from config.serializers import ERROR_RESPONSES
 
 
@@ -50,7 +51,7 @@ def _profile_response(profile: object) -> Response:
 class CurrentProfileView(APIView):
     """Retrieve or update the authenticated user's own profile."""
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
@@ -98,7 +99,7 @@ class CurrentProfileView(APIView):
 class UpdatePreferencesView(APIView):
     """Update the authenticated user's regional preferences."""
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(

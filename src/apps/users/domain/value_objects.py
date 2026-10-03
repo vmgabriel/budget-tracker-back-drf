@@ -80,3 +80,18 @@ class PasswordHash:
             raise ValueError("Password hash cannot be empty.")
         if len(self.value) > 255:
             raise ValueError("Password hash cannot exceed 255 characters.")
+
+
+@dataclass(frozen=True, slots=True)
+class BanReason:
+    """A non-empty, bounded explanation for a user ban."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip()
+        if not normalized:
+            raise ValueError("Ban reason cannot be empty.")
+        if len(normalized) > 500:
+            raise ValueError("Ban reason cannot exceed 500 characters.")
+        object.__setattr__(self, "value", normalized)

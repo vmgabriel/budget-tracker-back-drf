@@ -11,3 +11,11 @@ class EmailAlreadyExists(UserDomainError):
 
 class UserNotFound(UserDomainError):
     """Raised when a requested user does not exist."""
+
+
+class UserAlreadyBanned(UserDomainError):
+    """Raised when a banned user is banned again."""
+
+
+class UserNotBanned(UserDomainError):
+    """Raised when an active user is unbanned."""

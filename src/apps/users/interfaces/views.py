@@ -30,14 +30,22 @@ from apps.users.application.exceptions import (
 )
 from apps.users.application.use_cases import (
     AdminUpdateUserCommand,
+    BanUserCommand,
     ChangeUserPlanCommand,
     CreateUserCommand,
 )
-from apps.users.domain.exceptions import EmailAlreadyExists, UserNotFound
+from apps.users.domain.exceptions import (
+    EmailAlreadyExists,
+    UserAlreadyBanned,
+    UserNotBanned,
+    UserNotFound,
+)
 from apps.users.domain.value_objects import PlanLevel, UserId
 from apps.users.interfaces.dependencies import build_user_use_cases
+from apps.users.interfaces.permissions import IsNotBanned
 from apps.users.interfaces.serializers import (
     AdminUpdateUserSerializer,
+    BanUserSerializer,
     ChangeUserPlanSerializer,
     RegistrationSerializer,
     UserPageSerializer,
@@ -55,6 +63,8 @@ def _translate_user_error(exc: Exception) -> APIException:
         return ValidationError({"email": [str(exc)]})
     if isinstance(exc, UserNotFound):
         return NotFound(str(exc))
+    if isinstance(exc, (UserAlreadyBanned, UserNotBanned)):
+        return ValidationError({"detail": str(exc)})
     if isinstance(exc, InvalidUserInput):
         return ValidationError({"detail": str(exc)})
     if isinstance(exc, AuthenticationFailed):
@@ -143,7 +153,7 @@ class LogoutView(APIView):
     client must discard both tokens after receiving this response.
     """
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
@@ -195,7 +205,7 @@ class RegisterView(APIView):
 class CurrentUserView(APIView):
     """Return the user represented by the authenticated JWT."""
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(responses={status.HTTP_200_OK: UserSerializer, **ERROR_RESPONSES})
@@ -213,7 +223,7 @@ class CurrentUserView(APIView):
 class UserListView(APIView):
     """List users for staff administrators."""
 
-    permission_classes = (IsAuthenticated, IsAdminUser)
+    permission_classes = (IsAuthenticated, IsAdminUser, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
@@ -249,7 +259,7 @@ class UserListView(APIView):
 class UserDetailView(APIView):
     """Read or partially update a user as a staff administrator."""
 
-    permission_classes = (IsAuthenticated, IsAdminUser)
+    permission_classes = (IsAuthenticated, IsAdminUser, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @staticmethod
@@ -307,10 +317,43 @@ class UserDetailView(APIView):
         return _user_response(user)
 
 
+class BanUserView(APIView):
+    """Ban a user as a staff administrator."""
+
+    permission_classes = (IsAuthenticated, IsAdminUser, IsNotBanned)
+    authentication_classes = (JWTAuthentication,)
+
+    @extend_schema(
+        request=BanUserSerializer,
+        responses={status.HTTP_200_OK: UserSerializer, **ERROR_RESPONSES},
+    )
+    def patch(
+        self,
+        request: Request,
+        pk: UUID | None = None,
+        user_id: UUID | None = None,
+    ) -> Response:
+        serializer = BanUserSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        selected_id = pk or user_id
+        if selected_id is None:
+            raise ValidationError({"detail": "A user identifier is required."})
+        try:
+            user = build_user_use_cases().ban.execute(
+                BanUserCommand(
+                    user_id=UserId(selected_id),
+                    reason=str(serializer.validated_data["reason"]),
+                )
+            )
+        except (UserNotFound, UserAlreadyBanned, InvalidUserInput) as exc:
+            raise _translate_user_error(exc) from exc
+        return _user_response(user)
+
+
 class ChangeUserPlanView(APIView):
     """Change a user's subscription plan as a staff administrator."""
 
-    permission_classes = (IsAuthenticated, IsAdminUser)
+    permission_classes = (IsAuthenticated, IsAdminUser, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(

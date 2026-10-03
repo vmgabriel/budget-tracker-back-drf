@@ -3,7 +3,9 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from apps.users.domain.exceptions import UserAlreadyBanned, UserNotBanned
 from apps.users.domain.value_objects import (
+    BanReason,
     Email,
     FullName,
     PasswordHash,
@@ -26,6 +28,8 @@ class User:
     created_at: datetime
     updated_at: datetime
     id: UserId | None = None
+    is_banned: bool = False
+    ban_reason: BanReason | None = None
 
     @classmethod
     def create(
@@ -70,6 +74,24 @@ class User:
         self._require_aware(now)
         self.is_active = is_active
         self.updated_at = now
+
+    def ban(self, reason: BanReason, *, now: datetime) -> "User":
+        self._require_aware(now)
+        if self.is_banned:
+            raise UserAlreadyBanned("User is already banned.")
+        self.is_banned = True
+        self.ban_reason = reason
+        self.updated_at = now
+        return self
+
+    def unban(self, *, now: datetime) -> "User":
+        self._require_aware(now)
+        if not self.is_banned:
+            raise UserNotBanned("User is not banned.")
+        self.is_banned = False
+        self.ban_reason = None
+        self.updated_at = now
+        return self
 
     @staticmethod
     def _require_aware(now: datetime) -> None:

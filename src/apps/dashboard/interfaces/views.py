@@ -21,13 +21,14 @@ from apps.dashboard.interfaces.serializers import (
     DashboardQuerySerializer,
     DashboardSummarySerializer,
 )
+from apps.users.interfaces.permissions import IsNotBanned
 from config.serializers import ERROR_RESPONSES
 
 
 class DashboardOverviewView(APIView):
     """Return today's, this week's, and this month's persisted snapshots."""
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
@@ -43,7 +44,7 @@ class DashboardOverviewView(APIView):
 class DashboardView(APIView):
     """Return only persisted summaries; the HTTP read path performs no aggregation."""
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
     fixed_period: Period | None = None
 

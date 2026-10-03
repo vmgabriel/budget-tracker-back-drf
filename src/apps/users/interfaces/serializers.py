@@ -88,3 +88,17 @@ class AdminUpdateUserSerializer(serializers.Serializer):
 
 class ChangeUserPlanSerializer(serializers.Serializer):
     plan = serializers.ChoiceField(choices=PLAN_CHOICES)
+
+
+class BanUserSerializer(serializers.Serializer):
+    reason = serializers.CharField(
+        max_length=500,
+        allow_blank=False,
+        trim_whitespace=True,
+    )
+
+    def validate_reason(self, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise serializers.ValidationError("Ban reason cannot be blank.")
+        return normalized

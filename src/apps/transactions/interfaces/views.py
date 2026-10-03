@@ -26,6 +26,7 @@ from apps.transactions.interfaces.serializers import (
     TransactionSerializer,
     UpdateTransactionSerializer,
 )
+from apps.users.interfaces.permissions import IsNotBanned
 from config.serializers import ERROR_RESPONSES
 
 
@@ -51,7 +52,7 @@ def _transaction_response(transaction: object) -> Response:
 class TransactionListCreateView(APIView):
     """List the authenticated user's transactions or create one."""
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(
@@ -125,7 +126,7 @@ class TransactionListCreateView(APIView):
 class TransactionDetailView(APIView):
     """Retrieve, update, or delete one transaction owned by the current user."""
 
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, IsNotBanned)
     authentication_classes = (JWTAuthentication,)
 
     @extend_schema(

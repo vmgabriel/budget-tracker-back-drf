@@ -20,6 +20,8 @@ class UserDetails:
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
+    is_banned: bool = False
+    ban_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,4 +46,6 @@ def user_details(user: User) -> UserDetails:
         is_superuser=user.is_superuser,
         created_at=user.created_at,
         updated_at=user.updated_at,
+        is_banned=user.is_banned,
+        ban_reason=user.ban_reason.value if user.ban_reason is not None else None,
     )

@@ -5,10 +5,12 @@ from dataclasses import dataclass
 from apps.users.application.use_cases import (
     AdminUpdateUser,
     AuthenticateUser,
+    BanUser,
     ChangeUserPlan,
     CreateUser,
     GetUser,
     ListUsers,
+    UnbanUser,
 )
 from apps.users.infrastructure.persistence.repositories import DjangoUserRepository
 from apps.users.infrastructure.security import DjangoPasswordHasher
@@ -22,6 +24,8 @@ class UserUseCases:
     list: ListUsers
     admin_update: AdminUpdateUser
     change_plan: ChangeUserPlan
+    ban: BanUser
+    unban: UnbanUser
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +43,8 @@ def build_user_use_cases() -> UserUseCases:
         list=ListUsers(repository),
         admin_update=AdminUpdateUser(repository, clock),
         change_plan=ChangeUserPlan(repository, clock),
+        ban=BanUser(repository, clock),
+        unban=UnbanUser(repository, clock),
     )
 
 

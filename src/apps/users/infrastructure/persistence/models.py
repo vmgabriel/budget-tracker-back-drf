@@ -22,6 +22,8 @@ class User(AbstractUser):
         default=PlanLevel.FREE.value,
     )
     updated_at = models.DateTimeField(auto_now=True)
+    is_banned = models.BooleanField(default=False, db_index=True)
+    ban_reason = models.CharField(max_length=500, blank=True, null=True)
 
     objects = UserManager()  # type: ignore[assignment,misc]
 

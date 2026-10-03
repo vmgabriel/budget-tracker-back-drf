@@ -3,6 +3,7 @@
 from django.urls import path
 
 from apps.users.interfaces.views import (
+    BanUserView,
     ChangeUserPlanView,
     CurrentUserView,
     CustomTokenObtainPairView,
@@ -27,4 +28,5 @@ urlpatterns = [
     path("", UserListView.as_view(), name="user-list"),
     path("<uuid:pk>/", UserDetailView.as_view(), name="user-detail"),
     path("<uuid:pk>/plan/", ChangeUserPlanView.as_view(), name="change-plan"),
+    path("<uuid:pk>/ban/", BanUserView.as_view(), name="ban-user"),
 ]
