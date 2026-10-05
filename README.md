@@ -20,6 +20,7 @@ those rules.
 - [Transactions](#transactions)
 - [Dashboard](#dashboard)
 - [Profile & Settings](#profile--settings)
+- [Rentals & Property Management](#rentals--property-management)
 - [Celery and aggregation workflow](#celery-and-aggregation-workflow)
 - [OpenAPI and Swagger](#openapi-and-swagger)
 - [Sample data](#sample-data)
@@ -46,6 +47,8 @@ those rules.
   request path.
 - Auto-provisioned per-user profiles with timezone, language, currency, and
   date-format preferences.
+- Owner-scoped rentals: houses, apartments, documents, utility readings, and
+  rent payments with domain-computed consumption, billing, and payment status.
 - OpenAPI 3 schema and Swagger UI.
 - Health/readiness probes, structured error metadata, and optional local SQL
   query logging.
@@ -569,6 +572,106 @@ registration signal and reports how many were created:
 
 ```bash
 make backfill-profiles
+```
+
+## Rentals & Property Management
+
+Rentals endpoints manage houses, apartments, apartment documents, monthly
+utility readings, and rent payments. All of them require JWT bearer
+authentication (`Authorization: Bearer <access-token>`) and are always scoped
+to the current user: a user can only see houses they own and the resources
+nested under them. Attempts to access another user's resources return `404
+Not Found` (never `403`) so existence is never leaked.
+
+### Houses
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/rentals/houses/` | List the current user's houses |
+| `POST` | `/api/v1/rentals/houses/` | Create a house |
+| `GET` | `/api/v1/rentals/houses/{id}/` | Retrieve an owned house |
+| `PATCH` | `/api/v1/rentals/houses/{id}/` | Partially update name or address |
+| `DELETE` | `/api/v1/rentals/houses/{id}/` | Delete an owned house |
+
+### Apartments
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/rentals/apartments/?house_id={id}` | List apartments of a house |
+| `POST` | `/api/v1/rentals/apartments/` | Create an apartment (`house_id` in body) |
+| `GET` | `/api/v1/rentals/apartments/{id}/` | Retrieve an owned apartment |
+| `PATCH` | `/api/v1/rentals/apartments/{id}/` | Partially update number/floor/rent |
+| `DELETE` | `/api/v1/rentals/apartments/{id}/` | Delete an owned apartment |
+
+### Documents
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/rentals/apartments/{apartment_id}/documents/` | List apartment documents |
+| `POST` | `/api/v1/rentals/apartments/{apartment_id}/documents/` | Upload a document |
+| `GET` | `/api/v1/rentals/documents/{id}/` | Retrieve a document |
+| `DELETE` | `/api/v1/rentals/documents/{id}/` | Delete a document |
+
+`document_type` accepts `ID_CARD`, `LEASE_CONTRACT`,
+`EMPLOYMENT_CERTIFICATE`, or `OTHER`.
+
+### Utility readings
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/rentals/apartments/{apartment_id}/utilities/` | List readings (`utility_type`, `start_date`, `end_date` filters) |
+| `POST` | `/api/v1/rentals/apartments/{apartment_id}/utilities/` | Record a reading |
+| `GET` | `/api/v1/rentals/utilities/{id}/` | Retrieve a reading |
+| `GET` | `/api/v1/rentals/apartments/{apartment_id}/utilities/bill/?utility_type=WATER&year=2026&month=1` | Aggregated bill for a month |
+
+`utility_type` accepts `WATER`, `ELECTRICITY`, or `GAS`. The response
+includes the fields the domain calculates:
+
+```json
+{
+  "id": "c3b03b68-5e8b-4cf1-9fb7-9ef9c1ce6c4a",
+  "apartment_id": "9b5b2f54-ce0a-4c0a-9ef9-c1ce6c4a5e8b",
+  "utility_type": "WATER",
+  "reading_date": "2026-01-31",
+  "current_reading": "120.50",
+  "previous_reading": "100.00",
+  "consumption": "20.50",
+  "unit_cost": "0.5000",
+  "total_cost": "10.25",
+  "created_at": "2026-01-31T12:00:00Z"
+}
+```
+
+`consumption = current_reading - previous_reading` (must be non-negative,
+otherwise the request returns `400`) and `total_cost = consumption *
+unit_cost` (rounded to cents). A duplicate `(apartment, utility_type,
+reading_date)` is rejected with `400` (enforced by a `UniqueConstraint` and
+checked at the application layer first).
+
+### Payments
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/rentals/apartments/{apartment_id}/payments/` | List payments (`start_date`, `end_date` filters) |
+| `POST` | `/api/v1/rentals/apartments/{apartment_id}/payments/` | Record a payment |
+| `GET` | `/api/v1/rentals/payments/{id}/` | Retrieve a payment record |
+| `PATCH` | `/api/v1/rentals/payments/{id}/` | Partially update amount/status/notes |
+| `GET` | `/api/v1/rentals/apartments/{apartment_id}/payments/summary/?year=2026&month=1` | Aggregated monthly summary |
+
+Recording a payment auto-calculates `status` from the amount versus the
+apartment rent: `PAID` when the amount covers the full rent, `PARTIAL`
+otherwise. Aggregation returns the current posture of the apartment for the
+requested month:
+
+```json
+{
+  "apartment_id": "9b5b2f54-ce0a-4c0a-9ef9-c1ce6c4a5e8b",
+  "year": 2026,
+  "month": 1,
+  "total_paid": "300.00",
+  "outstanding_balance": "200.00",
+  "payment_count": 1
+}
 ```
 
 ## Celery and aggregation workflow
