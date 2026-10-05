@@ -15,6 +15,13 @@ from apps.dashboard.domain.value_objects import Period
 from apps.dashboard.infrastructure.persistence.models import DashboardSummary
 from apps.profile.application.config import PROFILE_DEFAULTS
 from apps.profile.infrastructure.persistence.models import ProfileModel
+from apps.rentals.infrastructure.persistence.models import (
+    ApartmentModel,
+    DocumentModel,
+    HouseModel,
+    PaymentRecordModel,
+    UtilityReadingModel,
+)
 from apps.transactions.domain.value_objects import TransactionType
 from apps.transactions.infrastructure.persistence.models import Transaction
 
@@ -123,3 +130,72 @@ class ProfileFactory(factory.django.DjangoModelFactory):
             setattr(profile, field, value)
         profile.save()
         return profile
+
+
+class HouseFactory(factory.django.DjangoModelFactory):
+    """Create persisted houses owned by a user."""
+
+    class Meta:
+        model = HouseModel
+
+    owner = factory.SubFactory(UserFactory)
+    name = factory.Sequence(lambda number: f"House {number}")
+    street = factory.Sequence(lambda number: f"{number} Main Street")
+    city = "Springfield"
+    state = "IL"
+    country = "US"
+
+
+class ApartmentFactory(factory.django.DjangoModelFactory):
+    """Create persisted apartments inside a house."""
+
+    class Meta:
+        model = ApartmentModel
+
+    house = factory.SubFactory(HouseFactory)
+    number = factory.Sequence(lambda number: f"{number}A")
+    floor = 1
+    monthly_rent = Decimal("500.00")
+
+
+class DocumentFactory(factory.django.DjangoModelFactory):
+    """Create persisted documents attached to an apartment."""
+
+    class Meta:
+        model = DocumentModel
+
+    apartment = factory.SubFactory(ApartmentFactory)
+    document_type = "LEASE_CONTRACT"
+    file_url = factory.Sequence(
+        lambda number: f"https://files.example.com/doc{number}.pdf"
+    )
+    description = "Lease contract"
+
+
+class UtilityReadingFactory(factory.django.DjangoModelFactory):
+    """Create persisted utility readings with consistent calculations."""
+
+    class Meta:
+        model = UtilityReadingModel
+
+    apartment = factory.SubFactory(ApartmentFactory)
+    utility_type = "WATER"
+    reading_date = date(2026, 1, 15)
+    previous_reading = Decimal("100.00")
+    current_reading = Decimal("120.50")
+    consumption = Decimal("20.50")
+    unit_cost = Decimal("0.5000")
+    total_cost = Decimal("10.25")
+
+
+class PaymentRecordFactory(factory.django.DjangoModelFactory):
+    """Create persisted payment records for an apartment."""
+
+    class Meta:
+        model = PaymentRecordModel
+
+    apartment = factory.SubFactory(ApartmentFactory)
+    payment_date = date(2026, 1, 5)
+    amount = Decimal("500.00")
+    status = "PAID"
+    notes = None

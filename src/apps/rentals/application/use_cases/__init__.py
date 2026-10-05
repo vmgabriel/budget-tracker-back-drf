@@ -31,6 +31,8 @@ from apps.rentals.application.use_cases.payments import (
     ListApartmentPayments,
     RecordPayment,
     RecordPaymentCommand,
+    UpdatePayment,
+    UpdatePaymentCommand,
 )
 from apps.rentals.application.use_cases.utilities import (
     CalculateUtilityBill,
@@ -68,6 +70,8 @@ __all__ = (
     "UpdateApartmentCommand",
     "UpdateHouse",
     "UpdateHouseCommand",
+    "UpdatePayment",
+    "UpdatePaymentCommand",
     "UploadDocument",
     "UploadDocumentCommand",
 )

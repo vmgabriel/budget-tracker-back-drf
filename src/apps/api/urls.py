@@ -10,4 +10,5 @@ urlpatterns = [
     path("transactions/", include("apps.transactions.interfaces.urls")),
     path("dashboard/", include("apps.dashboard.interfaces.urls")),
     path("profile/", include("apps.profile.interfaces.urls")),
+    path("rentals/", include("apps.rentals.interfaces.urls")),
 ]

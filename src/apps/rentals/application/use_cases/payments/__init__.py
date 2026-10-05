@@ -13,6 +13,10 @@ from apps.rentals.application.use_cases.payments.record_payment import (
     RecordPayment,
     RecordPaymentCommand,
 )
+from apps.rentals.application.use_cases.payments.update_payment import (
+    UpdatePayment,
+    UpdatePaymentCommand,
+)
 
 __all__ = (
     "GetPaymentRecord",
@@ -20,4 +24,6 @@ __all__ = (
     "ListApartmentPayments",
     "RecordPayment",
     "RecordPaymentCommand",
+    "UpdatePayment",
+    "UpdatePaymentCommand",
 )

@@ -430,6 +430,39 @@ class PaymentRecord:
             amount=self.amount, monthly_rent=monthly_rent
         )
 
+    def update(
+        self,
+        *,
+        amount: PaymentAmount | None = None,
+        status: PaymentStatus | None = None,
+        notes: str | None = None,
+        recalculate_status: bool = False,
+        monthly_rent: MonthlyRent | None = None,
+    ) -> None:
+        """Apply a partial, validated replacement to the payment record.
+
+        When ``recalculate_status`` is set, the status is derived from the
+        (possibly new) amount and ``monthly_rent``; an explicit ``status``
+        argument takes precedence.
+        """
+        if amount is not None and not isinstance(amount, PaymentAmount):
+            raise TypeError("Payment amount must be a PaymentAmount.")
+        if status is not None and not isinstance(status, PaymentStatus):
+            raise ValueError("Payment status is invalid.")
+        if amount is not None:
+            self.amount = amount
+        if notes is not None:
+            normalized = notes.strip() or None
+            if normalized is not None and len(normalized) > 2000:
+                raise ValueError("Payment notes cannot exceed 2000 characters.")
+            self.notes = normalized
+        if recalculate_status:
+            if monthly_rent is None:
+                raise ValueError("Monthly rent is required to recalculate status.")
+            self.refresh_status(monthly_rent=monthly_rent)
+        if status is not None:
+            self.status = status
+
     def mark_overdue(self) -> None:
         """Mark the payment as overdue; fully paid payments cannot lapse."""
         if self.status is PaymentStatus.PAID:
