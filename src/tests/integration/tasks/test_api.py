@@ -82,17 +82,17 @@ def test_task_routes_live_at_the_api_root() -> None:
     sample: Any = GoalFactory()
     task_id = sample.id
 
-    assert reverse("api_v1:tasks:task-list") == "/api/v1/tasks/"
+    assert reverse("api_v1:tasks:task-list") == "/api/v1/tasks/tasks/"
     assert (
         reverse("api_v1:tasks:task-detail", kwargs={"pk": task_id})
-        == f"/api/v1/tasks/{task_id}/"
+        == f"/api/v1/tasks/tasks/{task_id}/"
     )
     assert (
         reverse("api_v1:tasks:task-mark-done", kwargs={"pk": task_id})
-        == f"/api/v1/tasks/{task_id}/mark-done/"
+        == f"/api/v1/tasks/tasks/{task_id}/mark-done/"
     )
-    assert reverse("api_v1:tasks:goal-list") == "/api/v1/goals/"
-    assert reverse("api_v1:tasks:dailyplan-list") == "/api/v1/daily-plans/"
+    assert reverse("api_v1:tasks:goal-list") == "/api/v1/tasks/goals/"
+    assert reverse("api_v1:tasks:dailyplan-list") == "/api/v1/tasks/daily-plans/"
 
 
 def test_task_endpoints_require_authentication() -> None:

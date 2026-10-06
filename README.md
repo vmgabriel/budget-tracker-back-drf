@@ -721,32 +721,34 @@ requested month:
 
 ## Tasks, Goals & Daily Plans
 
-The tasks context answers at the API root; no router is involved, and every
-route is declared explicitly in `src/apps/tasks/interfaces/urls.py`.
+The context is mounted under `/api/v1/tasks/`, and every route states its domain
+explicitly inside `src/apps/tasks/interfaces/urls.py`. No router is involved,
+so the repetition in `/api/v1/tasks/tasks/` is deliberate: the prefix identifies
+the bounded context, the segment after it identifies the resource.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/v1/tasks/` | List my tasks; filter with `?status=` and `?goal_id=` |
-| `POST` | `/api/v1/tasks/` | Create a task |
-| `GET` | `/api/v1/tasks/<id>/` | Read one task |
-| `PATCH` | `/api/v1/tasks/<id>/` | Update the sent fields only |
-| `DELETE` | `/api/v1/tasks/<id>/` | Delete one task |
-| `POST` | `/api/v1/tasks/<id>/mark-doing/` | Start a task |
-| `POST` | `/api/v1/tasks/<id>/mark-done/` | Complete a task |
-| `POST` | `/api/v1/tasks/<id>/promote-priority/` | Raise importance by one level |
-| `GET`/`POST` | `/api/v1/goals/` | List or create goals |
-| `GET`/`PATCH`/`DELETE` | `/api/v1/goals/<id>/` | Read, update, or delete a goal |
-| `POST` | `/api/v1/goals/<id>/link-task/` | Attach `{"task_id": "<uuid>"}` |
-| `POST` | `/api/v1/goals/<id>/unlink-task/` | Detach `{"task_id": "<uuid>"}` |
-| `GET`/`POST` | `/api/v1/daily-plans/` | List days, or open one with `{"date": "YYYY-MM-DD"}` |
-| `GET`/`PATCH`/`DELETE` | `/api/v1/daily-plans/<id>/` | Read, flag, or discard a day |
-| `POST` | `/api/v1/daily-plans/<id>/add-task/` | Schedule `{"task_id": "<uuid>"}` |
-| `POST` | `/api/v1/daily-plans/<id>/remove-task/` | Unschedule `{"task_id": "<uuid>"}` |
+| `GET` | `/api/v1/tasks/tasks/` | List my tasks; filter with `?status=` and `?goal_id=` |
+| `POST` | `/api/v1/tasks/tasks/` | Create a task |
+| `GET` | `/api/v1/tasks/tasks/<id>/` | Read one task |
+| `PATCH` | `/api/v1/tasks/tasks/<id>/` | Update the sent fields only |
+| `DELETE` | `/api/v1/tasks/tasks/<id>/` | Delete one task |
+| `POST` | `/api/v1/tasks/tasks/<id>/mark-doing/` | Start a task |
+| `POST` | `/api/v1/tasks/tasks/<id>/mark-done/` | Complete a task |
+| `POST` | `/api/v1/tasks/tasks/<id>/promote-priority/` | Raise importance by one level |
+| `GET`/`POST` | `/api/v1/tasks/goals/` | List or create goals |
+| `GET`/`PATCH`/`DELETE` | `/api/v1/tasks/goals/<id>/` | Read, update, or delete a goal |
+| `POST` | `/api/v1/tasks/goals/<id>/link-task/` | Attach `{"task_id": "<uuid>"}` |
+| `POST` | `/api/v1/tasks/goals/<id>/unlink-task/` | Detach `{"task_id": "<uuid>"}` |
+| `GET`/`POST` | `/api/v1/tasks/daily-plans/` | List days, or open one with `{"date": "YYYY-MM-DD"}` |
+| `GET`/`PATCH`/`DELETE` | `/api/v1/tasks/daily-plans/<id>/` | Read, flag, or discard a day |
+| `POST` | `/api/v1/tasks/daily-plans/<id>/add-task/` | Schedule `{"task_id": "<uuid>"}` |
+| `POST` | `/api/v1/tasks/daily-plans/<id>/remove-task/` | Unschedule `{"task_id": "<uuid>"}` |
 
 Create a task:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/tasks/ \
+curl -X POST http://127.0.0.1:8000/api/v1/tasks/tasks/ \
   -H "Authorization: Bearer <access-token>" \
   -H "Content-Type: application/json" \
   -d '{

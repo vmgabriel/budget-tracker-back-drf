@@ -11,8 +11,8 @@ urlpatterns = [
     path("dashboard/", include("apps.dashboard.interfaces.urls")),
     path("profile/", include("apps.profile.interfaces.urls")),
     path("rentals/", include("apps.rentals.interfaces.urls")),
-    # Tasks, goals, and daily plans answer at the API root: the context name is
-    # already carried by each resource, so a /tasks/tasks/ prefix would only
-    # repeat itself.
-    path("", include("apps.tasks.interfaces.urls")),
+    # The tasks context keeps its own prefix inside the module, so the domain
+    # is stated explicitly in every route: /tasks/tasks/, /tasks/goals/,
+    # /tasks/daily-plans/.
+    path("tasks/", include("apps.tasks.interfaces.urls")),
 ]
