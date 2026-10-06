@@ -41,9 +41,22 @@ from apps.tasks.application.dto import (
     task_details,
 )
 from apps.tasks.application.exceptions import InvalidTasksInput, TasksApplicationError
+from apps.tasks.application.llm import (
+    DailyPlanProposal,
+    LlmError,
+    LlmInvalidResponseError,
+    LlmUnavailableError,
+    SubtaskProposal,
+    TaskDecomposition,
+    TaskEvaluation,
+    parse_daily_plan_proposal,
+    parse_task_decomposition,
+    parse_task_evaluation,
+)
 from apps.tasks.application.ports import (
     DailyPlanRepository,
     GoalRepository,
+    LlmAssistant,
     TaskRepository,
 )
 from apps.tasks.application.use_cases import (
@@ -82,6 +95,7 @@ __all__ = (
     "CreateTask",
     "CreateTaskCommand",
     "DailyPlanDetails",
+    "DailyPlanProposal",
     "DailyPlanRepository",
     "DeleteDailyPlan",
     "DeleteDailyPlanCommand",
@@ -108,6 +122,10 @@ __all__ = (
     "ListUserGoalsCommand",
     "ListUserTasks",
     "ListUserTasksCommand",
+    "LlmAssistant",
+    "LlmError",
+    "LlmInvalidResponseError",
+    "LlmUnavailableError",
     "MarkTaskAsDoing",
     "MarkTaskAsDoingCommand",
     "MarkTaskAsDone",
@@ -117,7 +135,10 @@ __all__ = (
     "PromoteTaskPriorityCommand",
     "RemoveTaskFromDailyPlan",
     "RemoveTaskFromDailyPlanCommand",
+    "SubtaskProposal",
+    "TaskDecomposition",
     "TaskDetails",
+    "TaskEvaluation",
     "TaskRepository",
     "TasksApplicationError",
     "UnlinkTaskFromGoal",
@@ -132,5 +153,8 @@ __all__ = (
     "daily_plan_details",
     "goal_details",
     "ordered_tasks",
+    "parse_daily_plan_proposal",
+    "parse_task_decomposition",
+    "parse_task_evaluation",
     "task_details",
 )

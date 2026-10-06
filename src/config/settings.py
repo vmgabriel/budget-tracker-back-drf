@@ -308,6 +308,12 @@ CELERY_BEAT_SCHEDULE = {
     }
 }
 
+# Assistant (LLM) assistance for the tasks context. Defaults target a local
+# Ollama daemon, which is the only provider this project supports: the whole
+# point of the feature is that task data never leaves the machine.
+OLLAMA_BASE_URL = env("OLLAMA_BASE_URL", default="http://localhost:11434")
+OLLAMA_MODEL = env("OLLAMA_MODEL", default="llama3:8b")
+
 LOGGING: dict[str, Any] = {
     "version": 1,
     "disable_existing_loggers": False,

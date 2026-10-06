@@ -16,6 +16,7 @@ dependencies = [
     "djangorestframework-simplejwt>=5.3.0,<5.6",
     "drf-spectacular>=0.28,<0.30",
     "gunicorn>=23,<24",
+    "httpx>=0.28,<0.29",
     "psycopg[binary]>=3.2.9,<3.3",
 ]
 
@@ -41,6 +42,7 @@ packages = ["src/apps", "src/shared", "src/config"]
 type = "virtual"
 dependencies = [
     "djangorestframework-simplejwt>=5.3.0,<5.6",
+    "httpx>=0.28,<0.29",
 ]
 
 [tool.hatch.envs.default.env-vars]
@@ -61,6 +63,7 @@ type = "virtual"
 dependencies = [
     "factory-boy>=3.3,<4",
     "freezegun>=1.5,<2",
+    "httpx>=0.28,<0.29",
     "pytest>=8.4,<9",
     "pytest-cov>=7,<8",
     "pytest-django>=4.11,<5",
@@ -83,6 +86,7 @@ dependencies = [
     "black>=25,<26",
     "factory-boy>=3.3,<4",
     "django-stubs[compatible-mypy]>=5.2,<6",
+    "httpx>=0.28,<0.29",
     "mypy>=1.16,<2",
     "pytest>=8.4,<9",
     "ruff>=0.12,<1",
@@ -164,6 +168,8 @@ module = [
     "environ",
     "environ.*",
     "freezegun",
+    "httpx",
+    "httpx.*",
     "rest_framework",
     "rest_framework.*",
 ]

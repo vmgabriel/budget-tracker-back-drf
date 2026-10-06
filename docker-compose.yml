@@ -14,6 +14,10 @@ x-app-environment: &app-environment
   CELERY_RESULT_BACKEND: ${DOCKER_CELERY_RESULT_BACKEND:-redis://redis:6379/0}
   CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
   GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+  # Containers reach a host-local Ollama through host.docker.internal, so the
+  # compose default differs from the .env one used by Hatch and the host.
+  OLLAMA_BASE_URL: ${DOCKER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
 
 x-app-service: &app-service
   build:
@@ -29,6 +33,9 @@ x-app-service: &app-service
       condition: service_healthy
     redis:
       condition: service_healthy
+  # Lets the worker reach an Ollama daemon running on the host.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   restart: unless-stopped
   init: true
   stop_grace_period: 30s
