@@ -342,7 +342,13 @@ class DailyPlan:
         *,
         max_hours: Duration | None = None,
     ) -> None:
-        """Schedule a task, optionally refusing to exceed ``max_hours``."""
+        """Schedule a task, refusing it once the day has reached its budget.
+
+        ``max_hours`` is a stopping rule rather than a hard ceiling: a task is
+        accepted while the day is still under budget, and rejected afterwards.
+        The first task of an empty day always fits, so a task larger than the
+        whole budget stays schedulable instead of becoming impossible.
+        """
         if not isinstance(task_id, TaskId):
             raise TypeError("Daily plan task must be identified by a TaskId.")
         if not isinstance(task_hours, Duration):
