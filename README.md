@@ -1,13 +1,18 @@
-# Budget Tracker
+# Life & Home Utility
 
-Budget Tracker is a containerized personal finance API built with Python 3.12+,
-Django 5.2, Django REST Framework, PostgreSQL, Redis, and Celery. The MVP is
-implemented end to end: JWT bearer authentication, owner-scoped transactions,
-and pre-computed daily, weekly, and monthly dashboard summaries.
+Life & Home Utility is a containerized, secure, and modular personal life and
+home management API built with Python 3.12+, Django 5.2, Django REST
+Framework, PostgreSQL, Redis, and Celery. Its mission is to give one owner a
+single, secure, centralized place to administer their life: their money, their
+home, and the day-to-day obligations that come with both. The current release
+is implemented end to end — identity, preferences and localization, financial
+tracking with pre-computed summaries, and property/rental management.
 
 The code follows Domain-Driven Design and Clean Architecture. Business rules
 are pure Python; Django, DRF, Celery, and the database are adapters around
-those rules.
+those rules. The same four-layer structure is the entry point for every future
+area of life administration (tasks, habits, inventory, maintenance schedules),
+each introduced as a new bounded context inside this monolith.
 
 ## Contents
 
@@ -33,6 +38,8 @@ those rules.
 
 ## Capabilities
 
+### Financial tracking
+
 - UUID-based users with `free`, `pro`, and `premium` plans.
 - JWT bearer authentication with one-hour access tokens and rotating seven-day
   refresh tokens.
@@ -46,17 +53,39 @@ those rules.
 - Owner-scoped dashboard reads that never aggregate financial data on the HTTP
   request path.
 - Auto-provisioned per-user profiles with timezone, language, currency, and
-  date-format preferences.
-- Owner-scoped rentals: houses, apartments, documents, utility readings, and
-  rent payments with domain-computed consumption, billing, and payment status.
-- OpenAPI 3 schema and Swagger UI.
+  date-format preferences, which localize every other module.
+
+### Property & rental management
+
+- Houses and the apartments nested under them, each fully owner-scoped.
+- Apartment documents (ID cards, lease contracts, employment certificates, and
+  arbitrary attachments) with typed classification.
+- Utility meter readings for water, electricity, and gas, with
+  domain-computed consumption, unit cost, and monthly bills.
+- Rent payments with an automatically derived `PAID`/`PARTIAL` status and a
+  monthly summary reporting paid totals and outstanding balance.
+
+### Foundation for life administration
+
+- A modular monolith that accepts new bounded contexts — tasks, habits,
+  inventory, maintenance schedules, and similar — without a migration of the
+  existing ones.
+- A single identity, profile, and authorization model shared by every context.
+- OpenAPI 3 schema and Swagger UI generated from the interface layer.
 - Health/readiness probes, structured error metadata, and optional local SQL
   query logging.
 - Database-free unit tests and isolated PostgreSQL/Celery integration tests.
 
 ## Architecture
 
-Every bounded context under `src/apps/<module>/` has four layers:
+The application is a **Majestic Monolith**: one deployable unit, one
+deployment pipeline, and one database, decomposed into bounded contexts that
+own their own domain model. A single runtime keeps operations simple, while
+the boundaries between contexts keep the domain coherent as it grows.
+
+This structure is the foundation for a scalable life management system rather
+than an implementation detail of the current modules. Every bounded context
+under `src/apps/<module>/` has four layers:
 
 ```text
 src/apps/<module>/
@@ -121,7 +150,7 @@ docker compose version
 ### Start the stack
 
 ```bash
-cd budget-tracker
+cd home-manage-utility-drf
 make install                 # create .env only if it does not exist
 make up                      # build and start web, worker, beat, PostgreSQL, Redis
 make migrate                 # apply migrations
@@ -536,7 +565,7 @@ Update details:
 curl -X PATCH http://127.0.0.1:8000/api/v1/profile/me/ \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"first_name": "Ana", "timezone": "America/Bogota", "bio": "Keeps a budget."}'
+  -d '{"first_name": "Ana", "timezone": "America/Bogota", "bio": "Life admin in one place."}'
 ```
 
 Response:
@@ -551,7 +580,7 @@ Response:
   "currency": "USD",
   "date_format": "YYYY-MM-DD",
   "avatar_url": null,
-  "bio": "Keeps a budget.",
+  "bio": "Life admin in one place.",
   "created_at": "2026-01-15T12:00:00Z",
   "updated_at": "2026-01-16T09:30:00Z"
 }
@@ -965,6 +994,10 @@ supervisor or orchestrator, and private service networking.
 
 ### Add a bounded context
 
+A new bounded context is the unit of growth for life administration: it must
+serve a coherent part of the centralized life/home management vision and own
+its rules end to end. Build it as follows.
+
 1. Create `src/apps/<module>/{domain,application,infrastructure,interfaces}`.
 2. Keep entities/value objects pure and use `@dataclass(frozen=True, slots=True)`
    for immutable value objects.
@@ -977,6 +1010,11 @@ supervisor or orchestrator, and private service networking.
 6. Add unit tests for domain/use cases and integration tests for adapters and
    HTTP behavior.
 7. Run `make lint`, `make test-unit`, and relevant integration tests.
+
+Version control is owned by the maintainer. Automated tooling and AI agents
+working on this repository must not stage, commit, tag, branch, or rewrite
+history; they produce changes, verify them, and report a summary for review.
+See the "Git Workflow" section of `AGENTS.md`.
 
 ### Add a Celery task
 
@@ -1006,7 +1044,8 @@ The current baseline decisions are: JWT bearer authentication for API clients
 (ADR-005), explicit four-layer Clean Architecture, pre-computed dashboard
 snapshots, and natural-key idempotency for asynchronous work. ADR-002 records
 the original session-based MVP decision and is superseded by ADR-005 for API
-clients.
+clients. ADR-006 records the expansion of the project scope from personal
+finance to personal life and home management.
 
 ## Troubleshooting
 

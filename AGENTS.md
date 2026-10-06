@@ -1,7 +1,36 @@
-# Budget Tracker - AI Agent Instructions
+# Life & Home Utility - AI Agent Instructions
 
 ## Project Overview
-Budget Tracker is a **Majestic Monolith** (Modular Monolith with Bounded Contexts) built with Django 5.2 and Domain-Driven Design. It manages users, financial transactions, pre-computed dashboards, and user profiles/preferences. The architecture prioritizes testability, maintainability, and clear separation of concerns.
+This is a **Personal Life & Home Management Utility** built as a **Majestic
+Monolith** (Modular Monolith with Bounded Contexts) with Django 5.2 and
+Domain-Driven Design. Its purpose is to give one owner a single, secure,
+centralized place to administer their whole life: identity and preferences,
+financial operations, pre-computed summaries, and property/rental
+administration. The architecture prioritizes testability, maintainability, and
+clear separation of concerns.
+
+## Philosophy
+The project started as a personal budget tracker and grew as real needs
+surfaced. Do not read that origin as the current limit: **finance is one
+bounded context, not the identity of the product.**
+
+Before implementing any new feature, confirm it serves the centralized life
+management vision. Planned and anticipated contexts include tasks, habits,
+inventory, and maintenance schedules; a request that does not fit a personal
+life or home administration scope should be raised rather than absorbed.
+
+When it does fit:
+- Model it as a new bounded context, not as an extension of `transactions` or
+  `rentals`.
+- Keep contexts autonomous. A context owns its models, its rules, and its
+  endpoints, and reaches other contexts only through explicit application
+  ports or its own interface.
+- Reuse the shared kernel (`Clock`, value-object patterns, the error
+  envelope) instead of duplicating it.
+- Share identity through the existing `users` and `profile` contexts; never
+  introduce a second notion of "owner".
+- Enforce the mandatory four-layer separation below without exception.
+- Update `README.md` when the public capabilities or API contract change.
 
 ## Tech Stack
 - **Backend**: Python 3.12+, Django 5.2, Django REST Framework, PostgreSQL 16, Redis 7.4, Celery 5.5+
@@ -103,7 +132,7 @@ All DRF errors use a standardized envelope from `src/config/api.py`:
 ### File System Access
 - **NEVER** access, read, or search outside the project directory
 - Specifically FORBIDDEN: `/root/`, `/usr/`, `/etc/`, `/var/`, `~`, `/home/`
-- All file operations must be within `/home/vmgabriel/Documentos/projects/budget-tracker/`
+- All file operations must be within `/home/vmgabriel/Documentos/projects/home-manage-utility-drf/`
 
 ### Command Execution
 - **NEVER** use `sudo` or escalate privileges
@@ -214,6 +243,43 @@ make refresh-token        # Refresh a JWT token
 7. Update serializers and views (if field is exposed via API)
 8. Update tests
 
+## Git Workflow (NON-NEGOTIABLE)
+
+### No Automatic Git Commits
+- **NEVER execute `git commit`, `git add`, `git stash`, `git reset --hard`,
+  `git checkout --`, `git revert`, `git rebase`, or any other command that
+  writes to the git index, working tree, or history.**
+- Also forbidden: creating branches or tags (`git switch -c`, `git tag`),
+  amending (`git commit --amend`), staging partial hunks, and running
+  `git` through a Makefile target, script, or hook. If a tool offers to
+  commit on your behalf, decline.
+- The developer (human) is solely responsible for reviewing and committing
+  code, and owns the commit message and its description of business value.
+- Rationale: the developer needs time to review, test, and understand every
+  change before it enters project history. Intermediate snapshots clutter the
+  history and obscure the full scope of a feature.
+
+### What to do instead
+1. Make the code/documentation/config changes in the working tree.
+2. Run the verification suite: `make lint` and `make test` (or
+   `make test-unit` / `make test-integration` for a single layer), plus
+   `make migrations-check` and `make check` when models or settings changed.
+3. Report a summary: files modified, files added, tests added or changed, and
+   the verification results.
+4. **Stop and wait for explicit developer approval.** Do not treat the task as
+   finished, and do not start follow-up work, until it is given.
+
+### Scope
+- This rule applies to everything in this repository: application code, domain
+  and application layers, migrations, tests, documentation (README, ADRs,
+  `AGENTS.md`), and configuration or infrastructure files.
+- It applies to all bounded contexts equally, and it applies to purely
+  documentation refactors such as this one.
+- Read-only git commands (`git status`, `git diff`, `git log`, `git show`) are
+  allowed and encouraged, because reporting a diff is part of the summary.
+- Ask before running any destructive git operation, even when the change looks
+  trivially safe.
+
 ## Gotchas & Common Pitfalls
 
 ### DRF Permissions
@@ -256,7 +322,8 @@ make refresh-token        # Refresh a JWT token
 ### Architecture Decision Records (ADRs)
 - Located in `docs/adr/`
 - Use standard format: Status, Context, Decision, Consequences, Alternatives
-- Record significant architectural decisions (e.g., JWT auth, pre-computed dashboards)
+- Record significant architectural decisions (e.g., JWT auth, pre-computed
+  dashboards, scope expansion in ADR-006)
 
 ### OpenAPI Schema
 - Generated by `drf-spectacular`
@@ -267,22 +334,29 @@ make refresh-token        # Refresh a JWT token
 ## Current Modules
 
 ### Users (`src/apps/users/`)
-- Authentication (JWT), user management, ban/unban functionality
-- Custom User model with email-based login
+- Authentication (JWT) and identity
+- Custom User model with email-based login; ban/unban functionality
+
+### Profile (`src/apps/profile/`)
+- User preferences and localization: timezone, language, currency, date format
+- Personal details: bio, avatar
+- Auto-provisioned via `post_save` signal
+- Configurable defaults in `application/config.py`
 
 ### Transactions (`src/apps/transactions/`)
-- CRUD operations for financial transactions
-- Owner-scoped, types: income, expense, investment, savings
+- Financial operations: CRUD for income, expense, investment, and savings
+- Owner-scoped
 
 ### Dashboard (`src/apps/dashboard/`)
-- Pre-computed daily/weekly/monthly summaries
+- Pre-computed life/financial summaries (daily, weekly, monthly)
 - Celery tasks for async aggregation
 - Idempotent tasks with retry logic
 
-### Profile (`src/apps/profile/`)
-- User settings: timezone, language, currency, date format, bio, avatar
-- Auto-provisioned via `post_save` signal
-- Configurable defaults in `application/config.py`
+### Rentals (`src/apps/rentals/`)
+- Property management: houses and apartments
+- Document management per apartment (ID cards, leases, certificates)
+- Utility meters: readings, consumption, and monthly bills
+- Payment tracking: rent payments, status derivation, monthly balance
 
 ## Success Criteria for Any Change
 
@@ -294,5 +368,7 @@ Before considering work complete:
 - [ ] Domain layer has no framework imports
 - [ ] All new code has tests (unit for domain/app, integration for infra/interfaces)
 - [ ] README updated (if API changed)
+- [ ] New feature fits the centralized life/home management vision and lives in its own bounded context
+- [ ] No git write command was executed (`git add`, `git commit`, branch/tag creation, history rewrites)
 - [ ] No hardcoded values in domain (use `application/config.py` for defaults)
 - [ ] Time handling uses `Clock` port (no `datetime.now()` in domain/app)
