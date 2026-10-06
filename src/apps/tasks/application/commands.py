@@ -220,6 +220,27 @@ class RemoveTaskFromDailyPlanCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class DeleteDailyPlanCommand:
+    """Input required to delete a daily plan."""
+
+    plan_id: UUID
+    user_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateDailyPlanCommand:
+    """Partial input accepted when updating a daily plan.
+
+    Scheduling changes go through the ``add-task``/``remove-task`` use cases;
+    only the provenance of the day is editable here.
+    """
+
+    plan_id: UUID
+    user_id: UUID
+    generated_by_llm: bool | Unset = UNSET
+
+
+@dataclass(frozen=True, slots=True)
 class ListDailyPlansCommand:
     """Input required to list plans within an inclusive date range."""
 

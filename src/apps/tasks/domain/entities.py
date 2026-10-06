@@ -376,6 +376,10 @@ class DailyPlan:
         """Record that the day was proposed by the assistant."""
         self.generated_by_llm = True
 
+    def mark_as_manually_planned(self) -> None:
+        """Record that the owner built the day themselves."""
+        self.generated_by_llm = False
+
 
 def _require_aware(now: datetime, message: str) -> None:
     if not isinstance(now, datetime):

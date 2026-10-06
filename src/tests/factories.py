@@ -22,6 +22,12 @@ from apps.rentals.infrastructure.persistence.models import (
     PaymentRecordModel,
     UtilityReadingModel,
 )
+from apps.tasks.domain.value_objects import GoalStatus, Priority, TaskStatus
+from apps.tasks.infrastructure.persistence.models import (
+    DailyPlanModel,
+    GoalModel,
+    TaskModel,
+)
 from apps.transactions.domain.value_objects import TransactionType
 from apps.transactions.infrastructure.persistence.models import Transaction
 
@@ -199,3 +205,46 @@ class PaymentRecordFactory(factory.django.DjangoModelFactory):
     amount = Decimal("500.00")
     status = "PAID"
     notes = None
+
+
+class GoalFactory(factory.django.DjangoModelFactory):
+    """Create persisted goals owned by a user."""
+
+    class Meta:
+        model = GoalModel
+
+    user = factory.SubFactory(UserFactory)
+    name = factory.Sequence(lambda number: f"Goal {number}")
+    description = "Goal description"
+    due_date = None
+    status = GoalStatus.ACTIVE.value
+
+
+class TaskFactory(factory.django.DjangoModelFactory):
+    """Create persisted tasks owned by a user."""
+
+    class Meta:
+        model = TaskModel
+
+    user = factory.SubFactory(UserFactory)
+    goal = None
+    name = factory.Sequence(lambda number: f"Task {number}")
+    description = "Task description"
+    due_date = None
+    importance = Priority.MEDIUM.value
+    estimated_hours = Decimal("1.00")
+    status = TaskStatus.TODO.value
+    is_checked_by_llm = False
+    llm_evaluation_failed = False
+
+
+class DailyPlanFactory(factory.django.DjangoModelFactory):
+    """Create persisted daily plans owned by a user."""
+
+    class Meta:
+        model = DailyPlanModel
+
+    user = factory.SubFactory(UserFactory)
+    date = date(2026, 1, 15)
+    total_hours = Decimal("0.00")
+    generated_by_llm = False

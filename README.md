@@ -26,6 +26,7 @@ each introduced as a new bounded context inside this monolith.
 - [Dashboard](#dashboard)
 - [Profile & Settings](#profile--settings)
 - [Rentals & Property Management](#rentals--property-management)
+- [Tasks, Goals & Daily Plans](#tasks-goals--daily-plans)
 - [Celery and aggregation workflow](#celery-and-aggregation-workflow)
 - [OpenAPI and Swagger](#openapi-and-swagger)
 - [Sample data](#sample-data)
@@ -64,6 +65,21 @@ each introduced as a new bounded context inside this monolith.
   domain-computed consumption, unit cost, and monthly bills.
 - Rent payments with an automatically derived `PAID`/`PARTIAL` status and a
   monthly summary reporting paid totals and outstanding balance.
+
+### Task & goal management
+
+- Tasks with `low`/`medium`/`high` importance, an hour estimate, a markdown
+  description, an optional due date, and `todo`/`doing`/`done` status.
+- Goals (macrotasks) grouping tasks under a shared outcome; deleting a goal
+  keeps its tasks and only detaches them.
+- One daily plan per user and day, holding the scheduled tasks and their summed
+  hours, with a configurable stopping rule that refuses work once the daily
+  budget is reached (defaults: 8 hours).
+- An "overwhelmed" flag per task when its estimate passes the user's threshold
+  (default: 4 hours), so a single oversized task is visible as such.
+- Priority promotion for carried-over tasks, saturating at `high`.
+- Fully owner-scoped: a task, goal, or plan belonging to somebody else answers
+  `404`, never `403`.
 
 ### Foundation for life administration
 
@@ -702,6 +718,98 @@ requested month:
   "payment_count": 1
 }
 ```
+
+## Tasks, Goals & Daily Plans
+
+The tasks context answers at the API root; no router is involved, and every
+route is declared explicitly in `src/apps/tasks/interfaces/urls.py`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/tasks/` | List my tasks; filter with `?status=` and `?goal_id=` |
+| `POST` | `/api/v1/tasks/` | Create a task |
+| `GET` | `/api/v1/tasks/<id>/` | Read one task |
+| `PATCH` | `/api/v1/tasks/<id>/` | Update the sent fields only |
+| `DELETE` | `/api/v1/tasks/<id>/` | Delete one task |
+| `POST` | `/api/v1/tasks/<id>/mark-doing/` | Start a task |
+| `POST` | `/api/v1/tasks/<id>/mark-done/` | Complete a task |
+| `POST` | `/api/v1/tasks/<id>/promote-priority/` | Raise importance by one level |
+| `GET`/`POST` | `/api/v1/goals/` | List or create goals |
+| `GET`/`PATCH`/`DELETE` | `/api/v1/goals/<id>/` | Read, update, or delete a goal |
+| `POST` | `/api/v1/goals/<id>/link-task/` | Attach `{"task_id": "<uuid>"}` |
+| `POST` | `/api/v1/goals/<id>/unlink-task/` | Detach `{"task_id": "<uuid>"}` |
+| `GET`/`POST` | `/api/v1/daily-plans/` | List days, or open one with `{"date": "YYYY-MM-DD"}` |
+| `GET`/`PATCH`/`DELETE` | `/api/v1/daily-plans/<id>/` | Read, flag, or discard a day |
+| `POST` | `/api/v1/daily-plans/<id>/add-task/` | Schedule `{"task_id": "<uuid>"}` |
+| `POST` | `/api/v1/daily-plans/<id>/remove-task/` | Unschedule `{"task_id": "<uuid>"}` |
+
+Create a task:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/tasks/ \
+  -H "Authorization: Bearer <access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "Water the plants",
+        "description": "Every three days",
+        "importance": "medium",
+        "estimated_hours": "1.50",
+        "due_date": "2026-02-01"
+      }'
+```
+
+```json
+{
+  "id": "0f0d9a3d-6d0c-4a25-9b0f-5a1b0d2c9f11",
+  "goal_id": null,
+  "name": "Water the plants",
+  "description": "Every three days",
+  "due_date": "2026-02-01",
+  "importance": "medium",
+  "estimated_hours": "1.50",
+  "status": "todo",
+  "is_overwhelmed": false,
+  "is_checked_by_llm": false,
+  "llm_evaluation_failed": false,
+  "created_at": "2026-01-15T12:00:00Z",
+  "updated_at": "2026-01-15T12:00:00Z"
+}
+```
+
+### Partial updates and deadlines
+
+`PATCH` only touches the fields it receives: omitting `due_date` keeps the
+stored deadline, while sending `"due_date": null` clears it. An empty `PATCH`
+body is rejected with `400`.
+
+### Planning budgets
+
+Two product defaults live in `src/apps/tasks/application/config.py` and reach
+the use cases through an injected `PlanningPolicy`:
+
+- `OVERWHELMED_THRESHOLD_HOURS` (`4.0`) — an estimate above this marks a task
+  as `is_overwhelmed`.
+- `DAILY_PLAN_MAX_HOURS` (`8.0`) — once a day reaches this many hours,
+  `add-task` answers `409` until something is removed.
+
+They are values, not domain rules: Phase 2 resolves them per user from the
+profile, and the LLM assistance described below will reuse the same policy.
+
+### Status codes beyond the usual envelope
+
+| Situation | Status |
+| --- | --- |
+| Resource missing **or** owned by somebody else | `404` |
+| Rejected input (validation, unknown enum, empty `PATCH`) | `400` |
+| `DailyPlanFull`, `TaskAlreadyInPlan`, `TaskAlreadyDone` | `409` |
+
+### Phase 2 (not implemented yet)
+
+LLM assistance is out of scope for this phase. When it lands it will use
+`OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL`
+(default `llama3:8b`), plus the per-user policy values above. The
+`is_checked_by_llm` and `llm_evaluation_failed` flags already exist: editing a
+task's name, description, or due date resets the check so it is re-evaluated.
 
 ## Celery and aggregation workflow
 

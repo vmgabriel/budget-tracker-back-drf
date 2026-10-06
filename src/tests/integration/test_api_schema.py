@@ -17,6 +17,10 @@ def test_openapi_schema_is_served() -> None:
     assert "/api/v1/auth/login/" not in schema["paths"]
     assert "/api/v1/transactions/" in schema["paths"]
     assert "/api/v1/dashboard/overview/" in schema["paths"]
+    assert "/api/v1/tasks/" in schema["paths"]
+    assert "/api/v1/tasks/{id}/mark-done/" in schema["paths"]
+    assert "/api/v1/goals/{id}/link-task/" in schema["paths"]
+    assert "/api/v1/daily-plans/{id}/add-task/" in schema["paths"]
     assert "Bearer" in schema["components"]["securitySchemes"]
     assert schema["components"]["securitySchemes"]["Bearer"]["scheme"] == "bearer"
     transaction_parameters = {

@@ -2,10 +2,12 @@
 
 from apps.tasks.application.use_cases.daily_plans import (
     AddTaskToDailyPlan,
+    DeleteDailyPlan,
     GetDailyPlan,
     GetOrCreateDailyPlan,
     ListDailyPlans,
     RemoveTaskFromDailyPlan,
+    UpdateDailyPlan,
 )
 from apps.tasks.application.use_cases.goals import (
     CreateGoal,
@@ -31,6 +33,7 @@ __all__ = (
     "AddTaskToDailyPlan",
     "CreateGoal",
     "CreateTask",
+    "DeleteDailyPlan",
     "DeleteGoal",
     "DeleteTask",
     "GetDailyPlan",
@@ -46,6 +49,7 @@ __all__ = (
     "PromoteTaskPriority",
     "RemoveTaskFromDailyPlan",
     "UnlinkTaskFromGoal",
+    "UpdateDailyPlan",
     "UpdateGoal",
     "UpdateTask",
 )

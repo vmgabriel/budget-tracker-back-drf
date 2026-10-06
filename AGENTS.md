@@ -358,6 +358,13 @@ make refresh-token        # Refresh a JWT token
 - Utility meters: readings, consumption, and monthly bills
 - Payment tracking: rent payments, status derivation, monthly balance
 
+### Tasks (`src/apps/tasks/`)
+- Tasks with priority, hour estimate, due date, and `todo`/`doing`/`done` status
+- Goals (macrotasks) grouping tasks; deleting a goal keeps its tasks
+- Daily plans: one per user and day, with an hour budget and a full-day conflict
+- Overwhelmed-task flag from an injected planning policy (see `application/config.py`)
+- LLM evaluation flags reserved for Phase 2 (no LLM integration yet)
+
 ## Success Criteria for Any Change
 
 Before considering work complete:

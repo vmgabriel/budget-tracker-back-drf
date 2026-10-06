@@ -80,6 +80,7 @@ INSTALLED_APPS = [
     "apps.dashboard.apps.DashboardConfig",
     "apps.profile.apps.ProfileConfig",
     "apps.rentals.apps.RentalsConfig",
+    "apps.tasks.apps.TasksConfig",
 ]
 
 MIDDLEWARE = [
