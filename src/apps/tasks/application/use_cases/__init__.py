@@ -3,6 +3,7 @@
 from apps.tasks.application.use_cases.daily_plans import (
     AddTaskToDailyPlan,
     DeleteDailyPlan,
+    GenerateDailyPlanWithLlm,
     GetDailyPlan,
     GetOrCreateDailyPlan,
     ListDailyPlans,
@@ -20,7 +21,9 @@ from apps.tasks.application.use_cases.goals import (
 )
 from apps.tasks.application.use_cases.tasks import (
     CreateTask,
+    DecomposeOverwhelmingTask,
     DeleteTask,
+    EvaluateTaskWithLlm,
     GetTask,
     ListUserTasks,
     MarkTaskAsDoing,
@@ -33,9 +36,12 @@ __all__ = (
     "AddTaskToDailyPlan",
     "CreateGoal",
     "CreateTask",
+    "DecomposeOverwhelmingTask",
     "DeleteDailyPlan",
     "DeleteGoal",
     "DeleteTask",
+    "EvaluateTaskWithLlm",
+    "GenerateDailyPlanWithLlm",
     "GetDailyPlan",
     "GetGoal",
     "GetOrCreateDailyPlan",

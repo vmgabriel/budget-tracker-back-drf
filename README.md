@@ -736,6 +736,9 @@ the bounded context, the segment after it identifies the resource.
 | `POST` | `/api/v1/tasks/tasks/<id>/mark-doing/` | Start a task |
 | `POST` | `/api/v1/tasks/tasks/<id>/mark-done/` | Complete a task |
 | `POST` | `/api/v1/tasks/tasks/<id>/promote-priority/` | Raise importance by one level |
+| `POST` | `/api/v1/tasks/tasks/<id>/evaluate/` | Queue an assistant assessment (`202`) |
+| `POST` | `/api/v1/tasks/tasks/<id>/decompose/` | Queue an assistant decomposition (`202`) |
+| `GET` | `/api/v1/tasks/tasks/llm-health/` | Check that the assistant daemon answers |
 | `GET`/`POST` | `/api/v1/tasks/goals/` | List or create goals |
 | `GET`/`PATCH`/`DELETE` | `/api/v1/tasks/goals/<id>/` | Read, update, or delete a goal |
 | `POST` | `/api/v1/tasks/goals/<id>/link-task/` | Attach `{"task_id": "<uuid>"}` |
@@ -794,8 +797,9 @@ the use cases through an injected `PlanningPolicy`:
 - `DAILY_PLAN_MAX_HOURS` (`8.0`) — once a day reaches this many hours,
   `add-task` answers `409` until something is removed.
 
-They are values, not domain rules: Phase 2 resolves them per user from the
-profile, and the LLM assistance described below will reuse the same policy.
+They are values, not domain rules: Phase 2 will resolve them per user from the
+profile, and the assistant assistance described below already reuses the same
+policy through `PlanningPolicy`.
 
 ### Status codes beyond the usual envelope
 
@@ -805,13 +809,47 @@ profile, and the LLM assistance described below will reuse the same policy.
 | Rejected input (validation, unknown enum, empty `PATCH`) | `400` |
 | `DailyPlanFull`, `TaskAlreadyInPlan`, `TaskAlreadyDone` | `409` |
 
-### Phase 2 (not implemented yet)
+### Assistant assistance
 
-LLM assistance is out of scope for this phase. When it lands it will use
-`OLLAMA_BASE_URL` (default `http://localhost:11434`) and `OLLAMA_MODEL`
-(default `llama3:8b`), plus the per-user policy values above. The
-`is_checked_by_llm` and `llm_evaluation_failed` flags already exist: editing a
-task's name, description, or due date resets the check so it is re-evaluated.
+Task assessment, decomposition, and day planning run against a local
+[Ollama](https://ollama.com) daemon: `OLLAMA_BASE_URL` (default
+`http://localhost:11434`) and `OLLAMA_MODEL` (default `llama3:8b`). Task content
+never leaves the machine.
+
+Three properties define the feature:
+
+- **Asynchronous.** An HTTP request only enqueues work and answers `202`. No
+  view and no use case ever calls the model; every LLM call happens in
+  `src/apps/tasks/infrastructure/tasks.py`.
+- **Optional.** The daemon may be absent, slow, or unhelpful. Every failure is
+  recorded on the entity (`llm_evaluation_failed`) and reported as a warning,
+  so the feature degrades instead of failing. Nothing returns a `500` because
+  Ollama is down, and retries cover the database only - an unreachable model is
+  not transient, so re-running a paid prompt would help nobody.
+- **Explicit.** Nothing is evaluated automatically. Editing a task never
+  re-triggers the assistant, which matters because an evaluation overwrites
+  `importance` and `estimated_hours`. `POST .../evaluate/` always re-evaluates,
+  because asking twice is a deliberate request.
+
+```text
+POST /api/v1/tasks/tasks/<id>/evaluate/    → evaluate_task_celery
+POST /api/v1/tasks/tasks/<id>/decompose/   → decompose_overwhelming_task_celery
+GET  /api/v1/tasks/tasks/llm-health/       → 200 {"status": "ok", "model": ...}
+                                             503 {"status": "unavailable"}
+```
+
+`evaluate_task_celery` sets `importance` and `estimated_hours`, and marks the
+task `is_checked_by_llm`. `decompose_overwhelming_task_celery` does nothing
+below the overwhelmed threshold; above it, it creates a goal plus the proposed
+subtasks (inheriting the deadline, starting at `low` importance) and marks the
+original `done` rather than deleting it, so a poor suggestion stays
+recoverable. `generate_daily_plan_celery` fills a day from the owner's `todo`
+backlog and **recomputes the stored hours from the real estimates**, because a
+model that miscounts should not be able to write a day whose hours disagree
+with its own tasks. It drops invented task ids rather than trusting them.
+
+Editing a task's name, description, or due date resets `is_checked_by_llm`, so a
+stale assessment is never mistaken for a current one.
 
 ## Celery and aggregation workflow
 

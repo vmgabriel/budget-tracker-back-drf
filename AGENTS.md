@@ -363,7 +363,12 @@ make refresh-token        # Refresh a JWT token
 - Goals (macrotasks) grouping tasks; deleting a goal keeps its tasks
 - Daily plans: one per user and day, with an hour budget and a full-day conflict
 - Overwhelmed-task flag from an injected planning policy (see `application/config.py`)
-- LLM evaluation flags reserved for Phase 2 (no LLM integration yet)
+- Assistant assistance over a local Ollama daemon: task evaluation, decomposition of
+  overwhelming tasks, and daily-plan generation. Every LLM call runs in a Celery task
+  (`infrastructure/tasks.py`); views and use cases never call the model. Failures
+  degrade to `llm_evaluation_failed` instead of raising, and are never retried, because
+  an absent daemon is not a transient error. Evaluation is explicit, never automatic:
+  editing a task must not re-trigger it and overwrite the owner's own fields.
 
 ## Success Criteria for Any Change
 

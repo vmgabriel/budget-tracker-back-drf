@@ -22,6 +22,14 @@ HOURS_FIELD_KWARGS = {
     "min_value": 0,
 }
 
+LLM_STATUS_OK = "ok"
+LLM_STATUS_UNAVAILABLE = "unavailable"
+
+LLM_STATUS_CHOICES: tuple[tuple[str, str], ...] = (
+    (LLM_STATUS_OK, "Ok"),
+    (LLM_STATUS_UNAVAILABLE, "Unavailable"),
+)
+
 
 class CreateTaskSerializer(serializers.Serializer):
     """Validate the fields required to create a task."""
@@ -196,3 +204,23 @@ class TaskFilterQuerySerializer(serializers.Serializer):
 
     status = serializers.ChoiceField(choices=TASK_STATUS_CHOICES, required=False)
     goal_id = serializers.UUIDField(required=False)
+
+
+class LlmQueuedSerializer(serializers.Serializer):
+    """Report that assistant work was accepted for background processing.
+
+    The response deliberately describes the *request*, not the result: the work
+    happens after this response is written, so claiming an outcome here would be
+    a guess.
+    """
+
+    detail = serializers.CharField(read_only=True)
+    task_id = serializers.UUIDField(read_only=True)
+    queued = serializers.BooleanField(read_only=True)
+
+
+class LlmHealthSerializer(serializers.Serializer):
+    """Report whether the assistant provider is reachable."""
+
+    status = serializers.ChoiceField(choices=LLM_STATUS_CHOICES, read_only=True)
+    model = serializers.CharField(read_only=True)

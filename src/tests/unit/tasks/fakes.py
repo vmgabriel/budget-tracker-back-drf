@@ -2,8 +2,14 @@
 
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
+from typing import Any
 from uuid import uuid4
 
+from apps.tasks.application.llm import (
+    DailyPlanProposal,
+    TaskDecomposition,
+    TaskEvaluation,
+)
 from apps.tasks.domain.entities import DailyPlan, Goal, Task
 from apps.tasks.domain.value_objects import (
     DailyPlanId,
@@ -134,3 +140,73 @@ class FakeDailyPlanRepository:
         if plan.id is None:
             raise ValueError("Cannot delete an unidentified daily plan.")
         del self.plans[plan.id]
+
+
+class FakeLlmAssistant:
+    """Answer assistant calls from canned values, recording what was asked.
+
+    ``failure`` stands in for every way a real provider can let us down: an
+    unreachable daemon, an unparseable reply, and a provider raising something
+    outside the port's own vocabulary all have to degrade the same way.
+    """
+
+    def __init__(
+        self,
+        evaluation: TaskEvaluation | None = None,
+        decomposition: TaskDecomposition | None = None,
+        plan: DailyPlanProposal | None = None,
+        failure: Exception | None = None,
+        available: bool = True,
+    ) -> None:
+        self.evaluation = evaluation
+        self.decomposition = decomposition
+        self.plan = plan
+        self.failure = failure
+        self.available = available
+        self.evaluate_calls: list[dict[str, Any]] = []
+        self.decompose_calls: list[dict[str, Any]] = []
+        self.plan_calls: list[dict[str, Any]] = []
+
+    def evaluate_task(
+        self,
+        *,
+        name: str,
+        description: str,
+        due_date_iso: str | None,
+    ) -> TaskEvaluation:
+        self._raise_if_failing()
+        self.evaluate_calls.append(
+            {"name": name, "description": description, "due_date_iso": due_date_iso}
+        )
+        if self.evaluation is None:
+            raise AssertionError("No evaluation was configured for this assistant.")
+        return self.evaluation
+
+    def decompose_task(self, *, name: str, description: str) -> TaskDecomposition:
+        self._raise_if_failing()
+        self.decompose_calls.append({"name": name, "description": description})
+        if self.decomposition is None:
+            raise AssertionError("No decomposition was configured for this assistant.")
+        return self.decomposition
+
+    def plan_day(
+        self,
+        *,
+        date_iso: str,
+        max_hours: str,
+        candidates: tuple[tuple[TaskId, str, str, str, str | None], ...],
+    ) -> DailyPlanProposal:
+        self._raise_if_failing()
+        self.plan_calls.append(
+            {"date_iso": date_iso, "max_hours": max_hours, "candidates": candidates}
+        )
+        if self.plan is None:
+            raise AssertionError("No plan was configured for this assistant.")
+        return self.plan
+
+    def is_available(self) -> bool:
+        return self.available
+
+    def _raise_if_failing(self) -> None:
+        if self.failure is not None:
+            raise self.failure

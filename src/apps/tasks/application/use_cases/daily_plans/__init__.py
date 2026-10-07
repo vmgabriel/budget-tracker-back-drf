@@ -6,6 +6,9 @@ from apps.tasks.application.use_cases.daily_plans.add_task_to_daily_plan import 
 from apps.tasks.application.use_cases.daily_plans.delete_daily_plan import (
     DeleteDailyPlan,
 )
+from apps.tasks.application.use_cases.daily_plans.generate_daily_plan_with_llm import (
+    GenerateDailyPlanWithLlm,
+)
 from apps.tasks.application.use_cases.daily_plans.get_daily_plan import GetDailyPlan
 from apps.tasks.application.use_cases.daily_plans.get_or_create_daily_plan import (
     GetOrCreateDailyPlan,
@@ -21,6 +24,7 @@ from apps.tasks.application.use_cases.daily_plans.update_daily_plan import (
 __all__ = (
     "AddTaskToDailyPlan",
     "DeleteDailyPlan",
+    "GenerateDailyPlanWithLlm",
     "GetDailyPlan",
     "GetOrCreateDailyPlan",
     "ListDailyPlans",

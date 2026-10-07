@@ -187,6 +187,49 @@ def test_task_llm_evaluation_flags() -> None:
 
     task.flag_llm_evaluation_failed()
     assert task.llm_evaluation_failed is True
+
+    # A later success must clear the failure, or the flag would stick forever.
+    task.mark_llm_checked()
+    assert task.llm_evaluation_failed is False
+
+
+def test_task_apply_llm_evaluation_adopts_assessment_and_clears_failure() -> None:
+    task = _task()
+    task.flag_llm_evaluation_failed()
+
+    task.apply_llm_evaluation(
+        Priority.HIGH,
+        Duration(Decimal("3.50")),
+        now=LATER,
+    )
+
+    assert task.importance is Priority.HIGH
+    assert task.estimated_hours == Duration(Decimal("3.50"))
+    assert task.is_checked_by_llm is True
+    assert task.llm_evaluation_failed is False
+    assert task.updated_at == LATER
+    # The owner's own content must survive an assistant pass untouched.
+    assert task.name == _task().name
+    assert task.due_date == _task().due_date
+
+
+def test_task_apply_llm_evaluation_does_not_reset_a_checked_task() -> None:
+    task = _task()
+    task.mark_llm_checked()
+
+    task.apply_llm_evaluation(Priority.LOW, Duration(Decimal("1")), now=LATER)
+
+    assert task.is_checked_by_llm is True
+
+
+def test_task_apply_llm_evaluation_rejects_invalid_assessments() -> None:
+    task = _task()
+
+    with pytest.raises(ValueError):
+        task.apply_llm_evaluation("high", Duration(Decimal("1")), now=LATER)  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError):
+        task.apply_llm_evaluation(Priority.HIGH, Decimal("1"), now=LATER)  # type: ignore[arg-type]
     assert task.needs_llm_evaluation is True
 
 
@@ -267,6 +310,19 @@ def test_daily_plan_remove_unknown_task() -> None:
 
     with pytest.raises(DailyPlanNotFound):
         plan.remove_task(TaskId(uuid4()), Duration(Decimal("1.00")))
+
+
+def test_daily_plan_clear_tasks_empties_the_day_and_its_hours() -> None:
+    plan = _plan()
+    plan.add_task(TaskId(uuid4()), Duration(Decimal("2.00")))
+    plan.add_task(TaskId(uuid4()), Duration(Decimal("3.50")))
+
+    plan.clear_tasks()
+
+    assert plan.task_ids == []
+    assert plan.total_hours == Duration(Decimal("0"))
+    # The whole budget is available again, so a regenerated day starts clean.
+    assert plan.is_full(Duration(Decimal("4.00"))) is False
 
 
 def test_daily_plan_is_full_compares_total_with_budget() -> None:

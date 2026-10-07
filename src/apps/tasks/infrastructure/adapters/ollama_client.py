@@ -182,8 +182,7 @@ class AsyncOllamaClient:
             payload = response.json()
         except httpx.HTTPStatusError as error:
             raise LlmUnavailableError(
-                "Ollama rejected the request "
-                f"with status {error.response.status_code}."
+                f"Ollama rejected the request with status {error.response.status_code}."
             ) from error
         except httpx.HTTPError as error:
             raise LlmUnavailableError(

@@ -53,8 +53,15 @@ from apps.tasks.domain.exceptions import (
     TaskNotFound,
     TasksDomainError,
 )
+from apps.tasks.infrastructure import tasks as tasks_infrastructure
+from apps.tasks.infrastructure.tasks import (
+    decompose_overwhelming_task_celery,
+    evaluate_task_celery,
+)
 from apps.tasks.interfaces.dependencies import build_tasks_use_cases
 from apps.tasks.interfaces.serializers import (
+    LLM_STATUS_OK,
+    LLM_STATUS_UNAVAILABLE,
     CreateDailyPlanSerializer,
     CreateGoalSerializer,
     CreateTaskSerializer,
@@ -62,6 +69,8 @@ from apps.tasks.interfaces.serializers import (
     DailyPlanSerializer,
     DailyPlanTaskSerializer,
     GoalSerializer,
+    LlmHealthSerializer,
+    LlmQueuedSerializer,
     TaskFilterQuerySerializer,
     TaskReferenceSerializer,
     TaskSerializer,
@@ -280,6 +289,87 @@ class TaskViewSet(_TasksViewSet):
             )
         )
         return Response(TaskSerializer(task).data)
+
+    @action(detail=True, methods=("post",), url_path="evaluate")
+    @extend_schema(
+        operation_id="tasks_evaluate",
+        request=None,
+        responses={status.HTTP_202_ACCEPTED: LlmQueuedSerializer, **ERROR_RESPONSES},
+        summary="Queue an assistant assessment of this task",
+        description=(
+            "Queues a background assessment of importance and effort. Answers "
+            "202 immediately; the outcome arrives on the task's "
+            "`is_checked_by_llm` and `llm_evaluation_failed` flags. A task "
+            "belonging to somebody else answers 404. This always re-evaluates, "
+            "because asking twice is an explicit request rather than noise."
+        ),
+    )
+    def evaluate(self, request: Request, pk: UUID) -> Response:
+        # Ownership is settled before anything is queued. The worker resolves the
+        # task from storage by id alone, so skipping this check would let one
+        # owner's request trigger work on another owner's task.
+        build_tasks_use_cases().get_task.execute(
+            GetTaskCommand(task_id=pk, user_id=_authenticated_user_id(request))
+        )
+        evaluate_task_celery.delay(str(pk), True)
+        return Response(
+            {"detail": "Evaluation queued.", "task_id": pk, "queued": True},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=True, methods=("post",), url_path="decompose")
+    @extend_schema(
+        operation_id="tasks_decompose",
+        request=None,
+        responses={status.HTTP_202_ACCEPTED: LlmQueuedSerializer, **ERROR_RESPONSES},
+        summary="Queue an assistant decomposition of this task",
+        description=(
+            "Queues a background decomposition of a task whose estimate is "
+            "above the overwhelming threshold. Answers 202 immediately. A task "
+            "that is not overwhelming is left untouched by the worker."
+        ),
+    )
+    def decompose(self, request: Request, pk: UUID) -> Response:
+        build_tasks_use_cases().get_task.execute(
+            GetTaskCommand(task_id=pk, user_id=_authenticated_user_id(request))
+        )
+        decompose_overwhelming_task_celery.delay(str(pk))
+        return Response(
+            {"detail": "Decomposition queued.", "task_id": pk, "queued": True},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(detail=False, methods=("get",), url_path="llm-health")
+    @extend_schema(
+        operation_id="tasks_llm_health",
+        responses={
+            status.HTTP_200_OK: LlmHealthSerializer,
+            status.HTTP_503_SERVICE_UNAVAILABLE: LlmHealthSerializer,
+            **ERROR_RESPONSES,
+        },
+        summary="Check that the assistant provider is reachable",
+        description=(
+            "Reports whether the local assistant daemon answers. An unreachable "
+            "provider is a 503 rather than a server error, because every "
+            "assisted feature degrades to a recorded flag instead of failing."
+        ),
+    )
+    def llm_health(self, request: Request) -> Response:
+        del request
+        # Reached through the module so the worker and the view share one
+        # seam: the client is configured identically in both places.
+        client = tasks_infrastructure.build_llm_client()
+        if client.is_available():
+            return Response(
+                {"status": LLM_STATUS_OK, "model": client.settings.model},
+                status=status.HTTP_200_OK,
+            )
+        # No model name when unreachable: the configured name says nothing
+        # about what would actually run, and reporting it would imply otherwise.
+        return Response(
+            {"status": LLM_STATUS_UNAVAILABLE, "model": None},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 class GoalViewSet(_TasksViewSet):

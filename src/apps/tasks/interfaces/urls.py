@@ -40,6 +40,24 @@ urlpatterns = [
         TaskViewSet.as_view({"post": "promote_priority"}),
         name="task-promote-priority",
     ),
+    path(
+        "tasks/<uuid:pk>/evaluate/",
+        TaskViewSet.as_view({"post": "evaluate"}),
+        name="task-evaluate",
+    ),
+    path(
+        "tasks/<uuid:pk>/decompose/",
+        TaskViewSet.as_view({"post": "decompose"}),
+        name="task-decompose",
+    ),
+    # Declared before "tasks/<uuid:pk>/" would be ambiguous anyway, since
+    # "llm-health" is not a UUID; keeping it next to the task routes makes the
+    # collection-level action obvious.
+    path(
+        "tasks/llm-health/",
+        TaskViewSet.as_view({"get": "llm_health"}),
+        name="task-llm-health",
+    ),
     # Goals
     path(
         "goals/",

@@ -122,6 +122,29 @@ class Task:
             self.is_checked_by_llm = False
         self.updated_at = now
 
+    def apply_llm_evaluation(
+        self,
+        importance: Priority,
+        estimated_hours: Duration,
+        *,
+        now: datetime,
+    ) -> None:
+        """Adopt an assistant assessment of importance and effort.
+
+        Deliberately separate from :meth:`update`: this writes only the fields
+        the assistant owns, so it cannot be mistaken for an owner edit. Passing
+        the current name through :meth:`update` instead would work today, but it
+        is exactly the kind of coincidence that silently starts resetting
+        ``is_checked_by_llm`` the moment a new field is added to ``update``.
+        """
+        self._validate_importance(importance)
+        self._validate_estimated_hours(estimated_hours)
+        _require_aware(now, "Task timestamps must be timezone-aware.")
+        self.importance = importance
+        self.estimated_hours = estimated_hours
+        self.mark_llm_checked()
+        self.updated_at = now
+
     def is_overwhelmed(self, threshold: OverwhelmedThreshold) -> bool:
         """Return whether the estimate surpasses the caller's threshold."""
         if not isinstance(threshold, OverwhelmedThreshold):
@@ -167,7 +190,12 @@ class Task:
         self.updated_at = now
 
     def mark_llm_checked(self) -> None:
-        """Record that the current content was successfully evaluated."""
+        """Record that the current content was successfully evaluated.
+
+        Clearing ``llm_evaluation_failed`` here matters: without it a task that
+        failed once could never be marked healthy again, because every later
+        success would leave the failure flag standing.
+        """
         self.is_checked_by_llm = True
         self.llm_evaluation_failed = False
 
@@ -334,6 +362,16 @@ class DailyPlan:
         if not isinstance(max_hours, Duration):
             raise TypeError("Daily plan budget must be a Duration.")
         return self.total_hours.hours >= max_hours.hours
+
+    def clear_tasks(self) -> None:
+        """Empty the day and hand its hours back to the budget.
+
+        Rebuilding a generated day needs this: removing each task in turn would
+        require remembering every task's original estimate, and a day whose
+        stored hours are silently wrong is worse than one that was never filled.
+        """
+        self.task_ids = []
+        self.total_hours = ZERO_HOURS
 
     def add_task(
         self,
