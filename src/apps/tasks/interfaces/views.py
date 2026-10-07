@@ -356,18 +356,23 @@ class TaskViewSet(_TasksViewSet):
     )
     def llm_health(self, request: Request) -> Response:
         del request
-        # Reached through the module so the worker and the view share one
-        # seam: the client is configured identically in both places.
+        # Reached through the module so the worker and the view share one seam:
+        # the client is configured identically in both places.
         client = tasks_infrastructure.build_llm_client()
-        if client.is_available():
+        availability = client.probe()
+        if availability.available:
             return Response(
                 {"status": LLM_STATUS_OK, "model": client.settings.model},
                 status=status.HTTP_200_OK,
             )
-        # No model name when unreachable: the configured name says nothing
-        # about what would actually run, and reporting it would imply otherwise.
+        # No model name when unreachable: the configured name says nothing about
+        # what would actually run, and reporting it would imply otherwise.
         return Response(
-            {"status": LLM_STATUS_UNAVAILABLE, "model": None},
+            {
+                "status": LLM_STATUS_UNAVAILABLE,
+                "model": None,
+                "error": availability.reason,
+            },
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 

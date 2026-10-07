@@ -223,4 +223,5 @@ class LlmHealthSerializer(serializers.Serializer):
     """Report whether the assistant provider is reachable."""
 
     status = serializers.ChoiceField(choices=LLM_STATUS_CHOICES, read_only=True)
-    model = serializers.CharField(read_only=True)
+    model = serializers.CharField(read_only=True, allow_null=True, required=False)
+    error = serializers.CharField(read_only=True, allow_null=True, required=False)

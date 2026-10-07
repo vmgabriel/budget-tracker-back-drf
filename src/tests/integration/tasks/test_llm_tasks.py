@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import pytest
 from django.urls import reverse
+from freezegun import freeze_time
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -30,8 +31,9 @@ from apps.tasks.infrastructure.tasks import (
     decompose_overwhelming_task_celery,
     evaluate_task_celery,
     generate_daily_plan_celery,
+    schedule_daily_plan_generation,
 )
-from tests.factories import TaskFactory, UserFactory
+from tests.factories import ProfileFactory, TaskFactory, UserFactory
 
 pytestmark = [pytest.mark.integration, pytest.mark.django_db(transaction=True)]
 
@@ -111,6 +113,15 @@ class StubAssistant:
     def is_available(self) -> bool:
         return self.available
 
+    def probe(self) -> Any:
+        from apps.tasks.infrastructure.adapters.ollama_client import (
+            AssistantAvailability,
+        )
+
+        return AssistantAvailability(
+            self.available, None if self.available else "offline"
+        )
+
     def _raise_if_failing(self) -> None:
         if self.failure is not None:
             raise self.failure
@@ -134,6 +145,103 @@ def test_celery_app_registers_assistant_tasks(celery_app: Any) -> None:
     assert (
         "apps.tasks.infrastructure.tasks.generate_daily_plan_celery" in celery_app.tasks
     )
+    assert (
+        "apps.tasks.infrastructure.tasks.schedule_daily_plan_generation"
+        in celery_app.tasks
+    )
+
+
+def test_beat_schedules_the_daily_plan_generation() -> None:
+    # Read from Django settings rather than the ``celery_app`` fixture: that
+    # fixture builds a throwaway app with Celery's own defaults, so it can
+    # never show the project's schedule.
+    from django.conf import settings
+
+    entry: Any = settings.CELERY_BEAT_SCHEDULE["generate-daily-plans"]
+    schedule = entry["schedule"]
+
+    assert (
+        entry["task"]
+        == "apps.tasks.infrastructure.tasks.schedule_daily_plan_generation"
+    )
+    assert (schedule.hour, schedule.minute) == ({6}, {0})
+    # A run still queued an hour later is stale and would duplicate the next day.
+    assert entry["options"]["expires"] <= 60 * 60
+
+
+def test_the_project_celery_app_registers_the_scheduler() -> None:
+    """Guards a real failure mode: a worker that knows nothing about these tasks.
+
+    They live in ``infrastructure.tasks``, which ``autodiscover_tasks`` does not
+    scan, so the app config has to import them. Without that import the web
+    process still works - it reaches the tasks through the views - and only the
+    worker ends up empty, which is easy to miss.
+    """
+    from config.celery import app
+
+    app.loader.import_default_modules()
+    for name in (
+        "evaluate_task_celery",
+        "decompose_overwhelming_task_celery",
+        "generate_daily_plan_celery",
+        "schedule_daily_plan_generation",
+    ):
+        assert f"apps.tasks.infrastructure.tasks.{name}" in app.tasks
+
+
+def test_scheduler_enqueues_one_job_per_active_user() -> None:
+    first = _user()
+    second = _user()
+    _user(is_active=False)
+
+    with patch.object(generate_daily_plan_celery, "delay") as delay:
+        result = schedule_daily_plan_generation.run()
+
+    assert result == {"users": 2, "jobs_enqueued": 2}
+    assert {call.args[0] for call in delay.call_args_list} == {
+        str(first.id),
+        str(second.id),
+    }
+
+
+def test_scheduler_uses_each_users_local_calendar_day() -> None:
+    """A UTC day would hand a user behind UTC tomorrow's plan at six in the morning."""
+    tokyo = _user()
+    cast(Any, ProfileFactory)(user=tokyo, timezone="Asia/Tokyo")
+
+    with (
+        patch.object(generate_daily_plan_celery, "delay") as delay,
+        freeze_time("2026-03-02 20:30:00"),
+    ):
+        schedule_daily_plan_generation.run()
+
+    # 20:30 UTC is already the following day in Tokyo.
+    assert delay.call_args.args[1] == "2026-03-03"
+
+
+def test_scheduler_falls_back_to_utc_without_a_profile_timezone() -> None:
+    _user()
+
+    with (
+        patch.object(generate_daily_plan_celery, "delay") as delay,
+        freeze_time("2026-03-02 20:30:00"),
+    ):
+        schedule_daily_plan_generation.run()
+
+    assert delay.call_args.args[1] == "2026-03-02"
+
+
+def test_scheduler_reads_the_user_list_once(
+    django_assert_num_queries: Any,
+) -> None:
+    """It runs unattended, so it must not fan out one query per user."""
+    _user()
+
+    with (
+        patch.object(generate_daily_plan_celery, "delay"),
+        django_assert_num_queries(2),
+    ):
+        schedule_daily_plan_generation.run()
 
 
 def test_client_settings_come_from_django_settings() -> None:

@@ -11,6 +11,8 @@ from typing import Any
 import environ
 from django.core.exceptions import ImproperlyConfigured
 
+from config.schedules import DEFAULT_DAILY_PLAN_CRON, parse_daily_plan_cron
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = BASE_DIR.parent
 
@@ -278,7 +280,6 @@ if ENVIRONMENT == "production":
         raise ImproperlyConfigured("Production CSRF trusted origins must use HTTPS.")
 
 if env.bool("DJANGO_TRUST_PROXY_HEADERS", default=False):
-
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 CELERY_BROKER_URL = env("REDIS_URL", default="redis://localhost:6379/0")
@@ -305,7 +306,16 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.dashboard.infrastructure.tasks.reconcile_user_dashboards",
         "schedule": 60 * 60 * 24,
         "options": {"expires": 60 * 30},
-    }
+    },
+    "generate-daily-plans": {
+        "task": "apps.tasks.infrastructure.tasks.schedule_daily_plan_generation",
+        "schedule": parse_daily_plan_cron(
+            env("DAILY_PLAN_GENERATION_CRON", default=DEFAULT_DAILY_PLAN_CRON)
+        ),
+        # A morning run that is still queued an hour later is stale, and the
+        # next day's run would duplicate it.
+        "options": {"expires": 60 * 60},
+    },
 }
 
 # Assistant (LLM) assistance for the tasks context. Defaults target a local

@@ -838,6 +838,30 @@ GET  /api/v1/tasks/tasks/llm-health/       → 200 {"status": "ok", "model": ...
                                              503 {"status": "unavailable"}
 ```
 
+### Automatic daily plans
+
+`celery_beat` queues `schedule_daily_plan_generation` each morning, which
+enqueues one `generate_daily_plan_celery` job per active user. The time comes
+from `DAILY_PLAN_GENERATION_CRON` (standard five-field cron, default
+`0 6 * * *`); only the hour and minute may vary, and an unparseable value logs a
+warning and falls back to 06:00 rather than preventing the worker from booting.
+
+```text
+celery beat (06:00)
+  → schedule_daily_plan_generation
+    → generate_daily_plan_celery(user_id, <that user's local date>)
+```
+
+Two details worth knowing:
+
+- **The scheduler only enqueues.** Its database work is two indexed reads, so it
+  does not slow down or lock anything as the backlog grows.
+- **Each user gets their own calendar day.** A user in UTC-5 would otherwise
+  receive tomorrow's plan at six in the morning.
+
+Without a running `celery_beat`, the other two assistance endpoints still work;
+only the automatic morning plan is missing.
+
 `evaluate_task_celery` sets `importance` and `estimated_hours`, and marks the
 task `is_checked_by_llm`. `decompose_overwhelming_task_celery` does nothing
 below the overwhelmed threshold; above it, it creates a goal plus the proposed

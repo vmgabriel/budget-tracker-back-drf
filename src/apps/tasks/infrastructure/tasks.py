@@ -21,9 +21,11 @@ from typing import Any
 from uuid import UUID
 
 from celery import shared_task
+from django.apps import apps
 from django.conf import settings as django_settings
 from django.db import OperationalError, transaction
 
+from apps.dashboard.domain.value_objects import utc_to_local_date
 from apps.tasks.application.use_cases import (
     DecomposeOverwhelmingTask,
     EvaluateTaskWithLlm,
@@ -42,6 +44,8 @@ from shared.infrastructure.clock import SystemClock
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_USER_TIMEZONE = "UTC"
+
 
 def build_llm_client() -> OllamaClient:
     """Build the assistant client from Django settings.
@@ -55,6 +59,57 @@ def build_llm_client() -> OllamaClient:
             getattr(django_settings, "OLLAMA_MODEL", None),
         )
     )
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=True,
+    max_retries=5,
+)
+def schedule_daily_plan_generation(self: Any) -> dict[str, Any]:
+    """Queue one daily-plan job per active user. Run by Celery Beat each morning.
+
+    This task only enqueues; it never touches a task row. That keeps the
+    scheduler's database work to two indexed reads, which matters because it
+    runs unattended: a scheduler doing real work would grow with the backlog
+    and could hold locks at exactly the hour every user opens the app.
+
+    Each user's *local* calendar day is resolved before enqueueing. Generating
+    "today" in UTC would hand a user in UTC-5 the plan for tomorrow, quietly,
+    at six in the morning.
+    """
+    clock = SystemClock()
+    now = clock.now()
+    user_model = apps.get_model("users", "User")
+    profile_model = apps.get_model("profile", "ProfileModel")
+
+    # Every active user's timezone in one query, rather than one query per user.
+    timezones = dict(
+        profile_model.objects.filter(user__is_active=True).values_list(
+            "user_id", "timezone"
+        )
+    )
+    user_ids = list(
+        user_model.objects.filter(is_active=True).values_list("pk", flat=True)
+    )
+
+    enqueued = 0
+    for user_id in user_ids:
+        timezone = timezones.get(user_id) or DEFAULT_USER_TIMEZONE
+        local_today = utc_to_local_date(now, timezone)
+        generate_daily_plan_celery.delay(str(user_id), local_today.isoformat())
+        enqueued += 1
+    logger.info(
+        "daily plan scheduling finished users=%s jobs=%s at=%s task_run=%s",
+        len(user_ids),
+        enqueued,
+        now.isoformat(),
+        self.request.id,
+    )
+    return {"users": len(user_ids), "jobs_enqueued": enqueued}
 
 
 @shared_task(
@@ -204,4 +259,5 @@ __all__ = (
     "decompose_overwhelming_task_celery",
     "evaluate_task_celery",
     "generate_daily_plan_celery",
+    "schedule_daily_plan_generation",
 )

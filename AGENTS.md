@@ -212,6 +212,21 @@ make refresh-token        # Refresh a JWT token
 - `src/tests/unit/test_architecture.py` enforces domain purity (no framework imports)
 - Runs automatically with `make test-unit`
 
+### Real assistant connectivity (planned, not implemented)
+
+The assistant adapter is never exercised against a live daemon in either test
+layer: an integration run with a reachable Ollama on the network made every
+`TaskFactory()` in the suite wait on a real model, turning a 10-second run into
+over two and a half minutes, and it would charge inference to whoever ran it.
+Both layers replace the port instead.
+
+That leaves the wiring itself unverified by tests - that `OLLAMA_BASE_URL` is
+reachable from the worker container, and that the configured model is actually
+pulled. The plan is a `src/tests/llm_real/` package, deliberately excluded from
+`test-unit`/`test-integration` and never part of CI, that a developer runs by
+hand to confirm connectivity. The `llm-health` endpoint covers the same need
+without any code at all.
+
 ## Development Workflow
 
 ### Adding a New Bounded Context

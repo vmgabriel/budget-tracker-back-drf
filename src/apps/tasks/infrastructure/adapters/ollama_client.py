@@ -80,6 +80,14 @@ class OllamaSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class AssistantAvailability:
+    """Whether the assistant can be reached, and why not when it cannot."""
+
+    available: bool
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AsyncOllamaClient:
     """Awaitable assistant client used by every LLM code path."""
 
@@ -146,18 +154,36 @@ class AsyncOllamaClient:
 
     async def is_available(self) -> bool:
         """Return whether Ollama answers right now, never raising."""
+        return (await self.probe()).available
+
+    async def probe(self) -> AssistantAvailability:
+        """Return availability plus a short, non-sensitive reason.
+
+        The reason is a category, never the underlying exception text: an
+        exception message embeds the daemon's host and port, which is
+        infrastructure detail that has no business in an HTTP response.
+        """
         try:
             async with httpx.AsyncClient(
                 timeout=HEALTH_TIMEOUT_SECONDS,
                 transport=self.transport,
             ) as client:
                 response = await client.get(self.settings.tags_url)
-        except httpx.HTTPError:
+        except httpx.ConnectError:
             logger.warning(
-                "ollama health probe failed base_url=%s", self.settings.base_url
+                "ollama health probe could not connect base_url=%s",
+                self.settings.base_url,
             )
-            return False
-        return response.status_code == httpx.codes.OK
+            return AssistantAvailability(False, "connection refused")
+        except httpx.TimeoutException as error:
+            logger.warning("ollama health probe timed out: %s", error)
+            return AssistantAvailability(False, "timeout")
+        except httpx.HTTPError as error:
+            logger.warning("ollama health probe failed: %s", error)
+            return AssistantAvailability(False, "transport error")
+        if response.status_code == httpx.codes.OK:
+            return AssistantAvailability(True, None)
+        return AssistantAvailability(False, f"unexpected status {response.status_code}")
 
     async def _chat(
         self,
@@ -257,6 +283,10 @@ class OllamaClient:
     def is_available(self) -> bool:
         """Return whether Ollama answers right now, never raising."""
         return asyncio.run(self._client().is_available())
+
+    def probe(self) -> AssistantAvailability:
+        """Return availability plus a short reason, never raising."""
+        return asyncio.run(self._client().probe())
 
 
 def settings_from_environment(
