@@ -734,7 +734,8 @@ the bounded context, the segment after it identifies the resource.
 | `PATCH` | `/api/v1/tasks/tasks/<id>/` | Update the sent fields only |
 | `DELETE` | `/api/v1/tasks/tasks/<id>/` | Delete one task |
 | `POST` | `/api/v1/tasks/tasks/<id>/mark-doing/` | Start a task |
-| `POST` | `/api/v1/tasks/tasks/<id>/mark-done/` | Complete a task |
+| `POST` | `/api/v1/tasks/tasks/<id>/mark-done/` | Complete a task, stamping `completed_at` |
+| `POST` | `/api/v1/tasks/tasks/<id>/reopen/` | Send a completed task back to `todo`, clearing `completed_at` |
 | `POST` | `/api/v1/tasks/tasks/<id>/promote-priority/` | Raise importance by one level |
 | `POST` | `/api/v1/tasks/tasks/<id>/evaluate/` | Queue an assistant assessment (`202`) |
 | `POST` | `/api/v1/tasks/tasks/<id>/decompose/` | Queue an assistant decomposition (`202`) |
@@ -744,6 +745,7 @@ the bounded context, the segment after it identifies the resource.
 | `POST` | `/api/v1/tasks/goals/<id>/link-task/` | Attach `{"task_id": "<uuid>"}` |
 | `POST` | `/api/v1/tasks/goals/<id>/unlink-task/` | Detach `{"task_id": "<uuid>"}` |
 | `GET`/`POST` | `/api/v1/tasks/daily-plans/` | List days, or open one with `{"date": "YYYY-MM-DD"}` |
+| `POST` | `/api/v1/tasks/daily-plans/generate/` | Queue an assistant plan for a day (`202`); body `{"date": "YYYY-MM-DD"}` is optional |
 | `GET`/`PATCH`/`DELETE` | `/api/v1/tasks/daily-plans/<id>/` | Read, flag, or discard a day |
 | `POST` | `/api/v1/tasks/daily-plans/<id>/add-task/` | Schedule `{"task_id": "<uuid>"}` |
 | `POST` | `/api/v1/tasks/daily-plans/<id>/remove-task/` | Unschedule `{"task_id": "<uuid>"}` |
@@ -777,9 +779,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/tasks/tasks/ \
   "is_checked_by_llm": false,
   "llm_evaluation_failed": false,
   "created_at": "2026-01-15T12:00:00Z",
-  "updated_at": "2026-01-15T12:00:00Z"
+  "updated_at": "2026-01-15T12:00:00Z",
+  "completed_at": null
 }
 ```
+
+`completed_at` is read-only: the server stamps it when a task reaches `done`,
+and `POST /tasks/<id>/reopen/` clears it again. A task that was never completed
+reports `null`.
 
 ### Partial updates and deadlines
 
@@ -834,9 +841,15 @@ Three properties define the feature:
 ```text
 POST /api/v1/tasks/tasks/<id>/evaluate/    → evaluate_task_celery
 POST /api/v1/tasks/tasks/<id>/decompose/   → decompose_overwhelming_task_celery
+POST /api/v1/tasks/daily-plans/generate/   → generate_daily_plan_celery
 GET  /api/v1/tasks/tasks/llm-health/       → 200 {"status": "ok", "model": ...}
                                              503 {"status": "unavailable"}
 ```
+
+`POST /daily-plans/generate/` is the manual counterpart of the nightly job: it
+plans a day on demand, with an optional `{"date": "YYYY-MM-DD"}` body (today when
+omitted), and answers `202`. The result is read back from the day itself, since
+the assistant's answer arrives after the response.
 
 ### Automatic daily plans
 

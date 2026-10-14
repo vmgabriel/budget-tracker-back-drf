@@ -38,6 +38,7 @@ from apps.tasks.application.commands import (
     MarkTaskAsDoneCommand,
     PromoteTaskPriorityCommand,
     RemoveTaskFromDailyPlanCommand,
+    ReopenTaskCommand,
     UnlinkTaskFromGoalCommand,
     UpdateDailyPlanCommand,
     UpdateGoalCommand,
@@ -50,6 +51,7 @@ from apps.tasks.domain.exceptions import (
     GoalNotFound,
     TaskAlreadyDone,
     TaskAlreadyInPlan,
+    TaskNotCompleted,
     TaskNotFound,
     TasksDomainError,
 )
@@ -57,6 +59,7 @@ from apps.tasks.infrastructure import tasks as tasks_infrastructure
 from apps.tasks.infrastructure.tasks import (
     decompose_overwhelming_task_celery,
     evaluate_task_celery,
+    generate_daily_plan_celery,
 )
 from apps.tasks.interfaces.dependencies import build_tasks_use_cases
 from apps.tasks.interfaces.serializers import (
@@ -68,6 +71,7 @@ from apps.tasks.interfaces.serializers import (
     DailyPlanRangeQuerySerializer,
     DailyPlanSerializer,
     DailyPlanTaskSerializer,
+    GenerateDailyPlanSerializer,
     GoalSerializer,
     LlmHealthSerializer,
     LlmQueuedSerializer,
@@ -92,6 +96,7 @@ CONFLICT_ERRORS = (
     DailyPlanFull,
     TaskAlreadyInPlan,
     TaskAlreadyDone,
+    TaskNotCompleted,
 )
 
 CONFLICT_RESPONSES: dict[int, Any] = {
@@ -272,6 +277,30 @@ class TaskViewSet(_TasksViewSet):
     def mark_done(self, request: Request, pk: UUID) -> Response:
         task = build_tasks_use_cases().mark_task_as_done.execute(
             MarkTaskAsDoneCommand(task_id=pk, user_id=_authenticated_user_id(request))
+        )
+        return Response(TaskSerializer(task).data)
+
+    @action(detail=True, methods=("post",), url_path="reopen")
+    @extend_schema(
+        operation_id="tasks_reopen",
+        request=None,
+        responses={
+            status.HTTP_200_OK: TaskSerializer,
+            **CONFLICT_RESPONSES,
+        },
+        summary="Send a completed task back to the backlog",
+        description=(
+            "Returns a completed task to `todo` and clears its `completed_at`. "
+            "This is the only way back from `done`: the other transitions "
+            "answer 409, because reopening a task is a decision the owner has "
+            "to make, not something a stray status change should do. A task "
+            "that was never completed answers 409 as well, and one belonging "
+            "to somebody else answers 404."
+        ),
+    )
+    def reopen(self, request: Request, pk: UUID) -> Response:
+        task = build_tasks_use_cases().reopen_task.execute(
+            ReopenTaskCommand(task_id=pk, user_id=_authenticated_user_id(request))
         )
         return Response(TaskSerializer(task).data)
 
@@ -591,6 +620,42 @@ class DailyPlanViewSet(_TasksViewSet):
             DeleteDailyPlanCommand(plan_id=pk, user_id=_authenticated_user_id(request))
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=("post",), url_path="generate")
+    @extend_schema(
+        operation_id="daily_plans_generate",
+        request=GenerateDailyPlanSerializer,
+        responses={
+            status.HTTP_202_ACCEPTED: LlmQueuedSerializer,
+            **ERROR_RESPONSES,
+        },
+        summary="Queue an assistant plan for a day",
+        description=(
+            "Queues a background generation of the day's plan from the "
+            "unfinished backlog and answers 202 immediately. The result is read "
+            "back from the day itself (`generated_by_llm` and its tasks), "
+            "because the assistant's answer arrives after the response. A day "
+            "the assistant cannot plan is left as it was rather than emptied."
+        ),
+    )
+    def generate(self, request: Request) -> Response:
+        # The request is answered before the model is consulted. No view may
+        # call the assistant: an unreachable or slow daemon must not hold an
+        # HTTP request open, and the work belongs in the worker where every
+        # other LLM call already lives.
+        serializer = GenerateDailyPlanSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user_id = _authenticated_user_id(request)
+        target_date = serializer.validated_data.get("date") or SystemClock().today()
+        generate_daily_plan_celery.delay(str(user_id), target_date.isoformat())
+        return Response(
+            {
+                "detail": "Daily plan generation queued.",
+                "date": target_date,
+                "queued": True,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=True, methods=("post",), url_path="add-task")
     @extend_schema(

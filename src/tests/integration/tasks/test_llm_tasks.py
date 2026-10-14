@@ -8,7 +8,7 @@ parsing through the use cases to committed rows, without a network call.
 runs inline and the assertions below read real committed state.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, cast
 from unittest.mock import patch
@@ -592,6 +592,14 @@ def test_llm_routes_live_under_the_tasks_prefix() -> None:
         == f"/api/v1/tasks/tasks/{task_id}/decompose/"
     )
     assert reverse("api_v1:tasks:task-llm-health") == "/api/v1/tasks/tasks/llm-health/"
+    assert (
+        reverse("api_v1:tasks:dailyplan-generate")
+        == "/api/v1/tasks/daily-plans/generate/"
+    )
+    assert (
+        reverse("api_v1:tasks:task-reopen", kwargs={"pk": task_id})
+        == f"/api/v1/tasks/tasks/{task_id}/reopen/"
+    )
 
 
 def test_assistant_routes_require_authentication() -> None:
@@ -667,6 +675,108 @@ def test_decompose_on_another_owners_task_answers_404(jwt_token_factory: Any) ->
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     delay.assert_not_called()
+
+
+def test_generate_endpoint_queues_the_requested_day(
+    jwt_token_factory: Any,
+) -> None:
+    user = _user()
+    client = _client(user, jwt_token_factory)
+
+    with patch(
+        "apps.tasks.infrastructure.tasks.generate_daily_plan_celery.delay"
+    ) as delay:
+        response = client.post(
+            reverse("api_v1:tasks:dailyplan-generate"), {"date": DAY.isoformat()}
+        )
+
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    assert response.json()["queued"] is True
+    assert response.json()["date"] == DAY.isoformat()
+    delay.assert_called_once_with(str(user.id), DAY.isoformat())
+
+
+def test_generate_endpoint_plans_today_when_no_date_is_given(
+    jwt_token_factory: Any,
+) -> None:
+    user = _user()
+    client = _client(user, jwt_token_factory)
+    # The clock is deliberately not frozen here: freezing it would also freeze
+    # the token's issued-at, and a token minted "in the future" is rejected.
+    today = datetime.now(UTC).date()
+
+    with patch("apps.tasks.infrastructure.tasks.generate_daily_plan_celery.delay") as d:
+        response = client.post(reverse("api_v1:tasks:dailyplan-generate"))
+
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    d.assert_called_once_with(str(user.id), today.isoformat())
+
+
+def test_generate_endpoint_rejects_a_malformed_date(jwt_token_factory: Any) -> None:
+    client = _client(_user(), jwt_token_factory)
+
+    with patch("apps.tasks.infrastructure.tasks.generate_daily_plan_celery.delay") as d:
+        response = client.post(
+            reverse("api_v1:tasks:dailyplan-generate"), {"date": "the day after"}
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    d.assert_not_called()
+
+
+def test_generate_endpoint_runs_the_assistant_and_fills_the_day(
+    jwt_token_factory: Any,
+) -> None:
+    """The queued job really plans the day, and the client reads the result."""
+    user = _user()
+    chosen = _task(user=user, estimated_hours=Decimal("2.00"))
+    _task(user=user, estimated_hours=Decimal("5.00"))
+    client = _client(user, jwt_token_factory)
+
+    patcher, assistant = _stub(plan={"task_ids": [str(chosen.id)], "total_hours": 2.0})
+    with patcher:
+        response = client.post(
+            reverse("api_v1:tasks:dailyplan-generate"), {"date": DAY.isoformat()}
+        )
+        plan = client.get(
+            reverse("api_v1:tasks:dailyplan-list"),
+            {"start_date": DAY.isoformat(), "end_date": DAY.isoformat()},
+        ).json()[0]
+
+    # Always eager in the test environment, so the assistant has already run by
+    # the time the response is asserted.
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    assert [call[0] for call in assistant.calls] == ["plan"]
+    assert plan["generated_by_llm"] is True
+    assert [row["id"] for row in plan["tasks"]] == [str(chosen.id)]
+    assert plan["total_hours"] == "2.00"
+
+
+def test_generate_endpoint_leaves_the_day_alone_when_the_assistant_fails(
+    jwt_token_factory: Any,
+) -> None:
+    from apps.tasks.application.llm import LlmUnavailableError
+
+    user = _user()
+    client = _client(user, jwt_token_factory)
+
+    patcher, _ = _stub(failure=LlmUnavailableError("down"))
+    with patcher:
+        response = client.post(
+            reverse("api_v1:tasks:dailyplan-generate"), {"date": DAY.isoformat()}
+        )
+
+    # The provider is down, which is a degraded feature and not a failed
+    # request: the endpoint already answered 202 before the work was queued.
+    assert response.status_code == status.HTTP_202_ACCEPTED
+    assert DailyPlanModel.objects.filter(user=user, date=DAY).count() == 0
+
+
+def test_generate_endpoint_requires_authentication() -> None:
+    assert (
+        APIClient().post(reverse("api_v1:tasks:dailyplan-generate")).status_code
+        == status.HTTP_401_UNAUTHORIZED
+    )
 
 
 def test_llm_health_reports_ok_when_the_provider_answers(

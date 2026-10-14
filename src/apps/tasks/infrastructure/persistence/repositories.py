@@ -47,6 +47,7 @@ TASK_UPDATE_FIELDS = (
     "status",
     "is_checked_by_llm",
     "llm_evaluation_failed",
+    "completed_at",
     "updated_at",
 )
 
@@ -119,6 +120,7 @@ class DjangoTaskRepository(TaskRepository):
             status=task.status.value,
             is_checked_by_llm=task.is_checked_by_llm,
             llm_evaluation_failed=task.llm_evaluation_failed,
+            completed_at=task.completed_at,
         )
 
     @staticmethod
@@ -132,6 +134,10 @@ class DjangoTaskRepository(TaskRepository):
         model.status = task.status.value
         model.is_checked_by_llm = task.is_checked_by_llm
         model.llm_evaluation_failed = task.llm_evaluation_failed
+        # Written unconditionally, including when the value is None: reopening
+        # has to clear the stored stamp, and a field left out of the update
+        # would keep the old completion time forever.
+        model.completed_at = task.completed_at
 
     @staticmethod
     def _to_domain(model: TaskModel) -> Task:
@@ -147,6 +153,7 @@ class DjangoTaskRepository(TaskRepository):
             status=TaskStatus(model.status),
             is_checked_by_llm=model.is_checked_by_llm,
             llm_evaluation_failed=model.llm_evaluation_failed,
+            completed_at=model.completed_at,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

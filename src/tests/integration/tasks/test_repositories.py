@@ -195,6 +195,19 @@ def test_task_repository_update_writes_every_mutable_field() -> None:
     assert updated.goal_id == goal.id
     assert updated.status is TaskStatus.DONE
     assert updated.is_checked_by_llm is True
+    assert updated.completed_at == later
+
+    # The stamp has to survive the round trip, and clearing it has to reach the
+    # column: a stale completion time on a reopened task would outlive it.
+    updated.reopen(now=later)
+    reopened = repository.update(updated)
+    reopened_id = reopened.id
+    assert reopened_id is not None
+    assert reopened.completed_at is None
+    reloaded = repository.get_by_id(reopened_id)
+    assert reloaded is not None
+    assert reloaded.completed_at is None
+    assert TaskModel.objects.get(pk=reopened_id.value).completed_at is None
 
 
 def test_task_repository_omits_absent_due_date_and_clears_it_on_demand() -> None:

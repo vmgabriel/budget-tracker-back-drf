@@ -98,6 +98,12 @@ class TaskModel(models.Model):
     )
     is_checked_by_llm = models.BooleanField(default=False)
     llm_evaluation_failed = models.BooleanField(default=False)
+    # Set by the domain when the task is completed, and cleared when it is
+    # reopened. It stays null for every other status, so the column answers
+    # "when was this actually finished?" without a second lookup.
+    completed_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="Completed At"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

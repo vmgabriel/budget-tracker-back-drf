@@ -1,6 +1,6 @@
 """Owner-scoped tasks HTTP interface tests using JWT authentication."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -301,6 +301,97 @@ def test_completing_a_task_twice_is_a_conflict(jwt_token_factory: Any) -> None:
     assert restarted.status_code == status.HTTP_409_CONFLICT
     assert repeated.data["error"]["message"] == "Task is already marked as done."
     assert repeated.data["detail"] == "Task is already marked as done."
+
+
+def test_completing_a_task_stamps_completed_at(jwt_token_factory: Any) -> None:
+    client = _client(UserFactory(), jwt_token_factory)
+    pk = _create_task(client)["id"]
+
+    done = client.post(reverse("api_v1:tasks:task-mark-done", kwargs={"pk": pk})).json()
+
+    assert done["completed_at"] is not None
+    stored = TaskModel.objects.get(pk=pk)
+    assert stored.completed_at is not None
+    # The column and the payload are the same instant, not two readings.
+    assert stored.completed_at == datetime.fromisoformat(
+        done["completed_at"].replace("Z", "+00:00")
+    )
+
+
+def test_reopen_returns_a_completed_task_to_the_backlog(
+    jwt_token_factory: Any,
+) -> None:
+    client = _client(UserFactory(), jwt_token_factory)
+    pk = _create_task(client)["id"]
+    client.post(reverse("api_v1:tasks:task-mark-done", kwargs={"pk": pk}))
+    assert TaskModel.objects.get(pk=pk).completed_at is not None
+
+    response = client.post(reverse("api_v1:tasks:task-reopen", kwargs={"pk": pk}))
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["status"] == "todo"
+    assert response.json()["completed_at"] is None
+    stored = TaskModel.objects.get(pk=pk)
+    assert stored.status == "todo"
+    # The column has to be cleared, not just the response: a stale completion
+    # time would keep claiming the task was finished.
+    assert stored.completed_at is None
+
+
+def test_reopening_a_task_that_is_not_done_is_a_conflict(
+    jwt_token_factory: Any,
+) -> None:
+    client = _client(UserFactory(), jwt_token_factory)
+    pk = _create_task(client)["id"]
+
+    response = client.post(reverse("api_v1:tasks:task-reopen", kwargs={"pk": pk}))
+
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.data["error"]["message"] == "Only a completed task can be reopened."
+    assert TaskModel.objects.get(pk=pk).status == "todo"
+
+
+def test_a_completed_task_can_be_done_again_after_reopening(
+    jwt_token_factory: Any,
+) -> None:
+    client = _client(UserFactory(), jwt_token_factory)
+    pk = _create_task(client)["id"]
+    client.post(reverse("api_v1:tasks:task-mark-done", kwargs={"pk": pk}))
+    client.post(reverse("api_v1:tasks:task-reopen", kwargs={"pk": pk}))
+
+    redone = client.post(reverse("api_v1:tasks:task-mark-done", kwargs={"pk": pk}))
+
+    assert redone.status_code == status.HTTP_200_OK
+    assert redone.json()["status"] == "done"
+    assert redone.json()["completed_at"] is not None
+
+
+def test_another_owners_task_cannot_be_reopened(jwt_token_factory: Any) -> None:
+    stranger: Any = TaskFactory(user=UserFactory(), status="done")
+    client = _client(UserFactory(), jwt_token_factory)
+
+    response = client.post(
+        reverse("api_v1:tasks:task-reopen", kwargs={"pk": stranger.pk})
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    stranger.refresh_from_db()
+    assert stranger.status == "done"
+
+
+def test_task_list_exposes_completed_at(jwt_token_factory: Any) -> None:
+    client = _client(UserFactory(), jwt_token_factory)
+    done_pk = _create_task(client, name="Finished")["id"]
+    _create_task(client, name="Pending")
+    client.post(reverse("api_v1:tasks:task-mark-done", kwargs={"pk": done_pk}))
+
+    listed = {
+        item["name"]: item
+        for item in client.get(reverse("api_v1:tasks:task-list")).json()
+    }
+
+    assert listed["Finished"]["completed_at"] is not None
+    assert listed["Pending"]["completed_at"] is None
 
 
 def test_promoting_priority_saturates_at_high(jwt_token_factory: Any) -> None:

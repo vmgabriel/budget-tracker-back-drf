@@ -36,6 +36,11 @@ urlpatterns = [
         name="task-mark-done",
     ),
     path(
+        "tasks/<uuid:pk>/reopen/",
+        TaskViewSet.as_view({"post": "reopen"}),
+        name="task-reopen",
+    ),
+    path(
         "tasks/<uuid:pk>/promote-priority/",
         TaskViewSet.as_view({"post": "promote_priority"}),
         name="task-promote-priority",
@@ -86,6 +91,11 @@ urlpatterns = [
         "daily-plans/",
         DailyPlanViewSet.as_view({"get": "list", "post": "create"}),
         name="dailyplan-list",
+    ),
+    path(
+        "daily-plans/generate/",
+        DailyPlanViewSet.as_view({"post": "generate"}),
+        name="dailyplan-generate",
     ),
     path(
         "daily-plans/<uuid:pk>/",

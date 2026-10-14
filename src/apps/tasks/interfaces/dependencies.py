@@ -26,6 +26,7 @@ from apps.tasks.application.use_cases import (
     MarkTaskAsDone,
     PromoteTaskPriority,
     RemoveTaskFromDailyPlan,
+    ReopenTask,
     UnlinkTaskFromGoal,
     UpdateDailyPlan,
     UpdateGoal,
@@ -57,6 +58,7 @@ class TasksUseCases:
     delete_task: DeleteTask
     mark_task_as_doing: MarkTaskAsDoing
     mark_task_as_done: MarkTaskAsDone
+    reopen_task: ReopenTask
     promote_task_priority: PromoteTaskPriority
     create_goal: CreateGoal
     get_goal: GetGoal
@@ -104,6 +106,7 @@ def build_tasks_use_cases(
         delete_task=DeleteTask(tasks),
         mark_task_as_doing=MarkTaskAsDoing(tasks, clock, policy),
         mark_task_as_done=MarkTaskAsDone(tasks, clock, policy),
+        reopen_task=ReopenTask(tasks, clock, policy),
         promote_task_priority=PromoteTaskPriority(tasks, clock, policy),
         create_goal=CreateGoal(goals, clock),
         get_goal=GetGoal(goals, tasks),

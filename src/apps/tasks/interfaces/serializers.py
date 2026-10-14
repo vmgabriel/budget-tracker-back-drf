@@ -98,6 +98,9 @@ class TaskSerializer(serializers.Serializer):
     llm_evaluation_failed = serializers.BooleanField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
+    # Read-only on purpose: the server decides when a task is completed, and
+    # reopening clears the value again. Null for every other status.
+    completed_at = serializers.DateTimeField(read_only=True, allow_null=True)
 
 
 class TaskReferenceSerializer(serializers.Serializer):
@@ -157,6 +160,18 @@ class CreateDailyPlanSerializer(serializers.Serializer):
     """Validate the fields required to create a daily plan."""
 
     date = serializers.DateField()
+
+
+class GenerateDailyPlanSerializer(serializers.Serializer):
+    """Validate a manual request to have the assistant plan a day.
+
+    ``date`` is optional so the common case, "plan my day", needs no body at
+    all. When it is absent the endpoint falls back to the same default the plan
+    listing uses, so the day answered is the day the client is already looking
+    at.
+    """
+
+    date = serializers.DateField(required=False, allow_null=True)
 
 
 class UpdateDailyPlanSerializer(serializers.Serializer):
