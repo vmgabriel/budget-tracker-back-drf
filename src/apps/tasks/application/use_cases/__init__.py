@@ -29,6 +29,7 @@ from apps.tasks.application.use_cases.tasks import (
     MarkTaskAsDoing,
     MarkTaskAsDone,
     PromoteTaskPriority,
+    ReopenTask,
     UpdateTask,
 )
 
@@ -53,6 +54,7 @@ __all__ = (
     "MarkTaskAsDoing",
     "MarkTaskAsDone",
     "PromoteTaskPriority",
+    "ReopenTask",
     "RemoveTaskFromDailyPlan",
     "UnlinkTaskFromGoal",
     "UpdateDailyPlan",

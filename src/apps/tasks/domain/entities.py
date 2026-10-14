@@ -9,6 +9,7 @@ from apps.tasks.domain.exceptions import (
     DailyPlanNotFound,
     TaskAlreadyDone,
     TaskAlreadyInPlan,
+    TaskNotCompleted,
 )
 from apps.tasks.domain.value_objects import (
     MAX_DESCRIPTION_LENGTH,
@@ -48,6 +49,7 @@ class Task:
     status: TaskStatus = TaskStatus.TODO
     is_checked_by_llm: bool = False
     llm_evaluation_failed: bool = False
+    completed_at: datetime | None = None
 
     @classmethod
     def create(
@@ -83,6 +85,10 @@ class Task:
             importance=importance,
             estimated_hours=estimated_hours,
             status=status,
+            # A task born completed is completed as of its creation, so the two
+            # fields can never disagree: `status is DONE` and
+            # `completed_at is None` cannot both be true of a stored task.
+            completed_at=now if status is TaskStatus.DONE else None,
             created_at=now,
             updated_at=now,
         )
@@ -160,11 +166,35 @@ class Task:
         self.updated_at = now
 
     def mark_as_done(self, *, now: datetime) -> None:
-        """Complete the task."""
+        """Complete the task, stamping the moment it was completed.
+
+        The timestamp comes from the caller's clock rather than from a second
+        reading of the system clock, so ``completed_at`` and ``updated_at`` are
+        always the same instant and a task cannot be completed "later" than it
+        was saved.
+        """
         if self.status is TaskStatus.DONE:
             raise TaskAlreadyDone("Task is already marked as done.")
         _require_aware(now, "Task timestamps must be timezone-aware.")
         self.status = TaskStatus.DONE
+        self.completed_at = now
+        self.updated_at = now
+
+    def reopen(self, *, now: datetime) -> None:
+        """Return a completed task to the backlog.
+
+        Reopening is deliberately its own method rather than a status
+        assignment: the owner has to ask for it, because moving a task back to
+        ``todo`` by accident is what :meth:`mark_as_doing` refuses to do. The
+        completion stamp is dropped with the status; a reopened task has no
+        completion history, and keeping a stale one would report a time the
+        task was no longer finished.
+        """
+        if self.status is not TaskStatus.DONE:
+            raise TaskNotCompleted("Only a completed task can be reopened.")
+        _require_aware(now, "Task timestamps must be timezone-aware.")
+        self.status = TaskStatus.TODO
+        self.completed_at = None
         self.updated_at = now
 
     def promote_priority(self, *, now: datetime) -> Priority:

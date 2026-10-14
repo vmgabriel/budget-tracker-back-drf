@@ -29,6 +29,10 @@ class TaskAlreadyDone(TasksDomainError):
     """Raised when a transition is requested on an already completed task."""
 
 
+class TaskNotCompleted(TasksDomainError):
+    """Raised when a task is reopened before it was ever completed."""
+
+
 class TaskAlreadyInPlan(TasksDomainError):
     """Raised when a task is scheduled twice on the same daily plan."""
 

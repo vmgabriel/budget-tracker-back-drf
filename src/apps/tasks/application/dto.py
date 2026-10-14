@@ -44,6 +44,7 @@ class TaskDetails:
     llm_evaluation_failed: bool
     created_at: datetime
     updated_at: datetime
+    completed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +95,7 @@ def task_details(task: Task, threshold: OverwhelmedThreshold) -> TaskDetails:
         llm_evaluation_failed=task.llm_evaluation_failed,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        completed_at=task.completed_at,
     )
 
 

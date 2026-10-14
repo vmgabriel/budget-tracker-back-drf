@@ -57,7 +57,14 @@ class DailyPlanGenerationOutcome:
 
 
 class GenerateDailyPlanWithLlm:
-    """Fill one day of the owner's backlog with the assistant's selection."""
+    """Fill one day of the owner's backlog with the assistant's selection.
+
+    This use case performs the model call itself, so it belongs to the worker:
+    the HTTP layer exposes the feature by enqueuing ``generate_daily_plan_celery``
+    and answering ``202``, exactly as the evaluation and decomposition features
+    do. Calling it from a view would block the request on a local daemon and
+    would contradict the rule that no request ever reaches the model.
+    """
 
     def __init__(
         self,

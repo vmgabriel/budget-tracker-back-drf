@@ -1,6 +1,6 @@
 """Tasks use-case tests: owner scoping, validation, and planning outcomes."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -24,6 +24,7 @@ from apps.tasks.application.commands import (
     MarkTaskAsDoneCommand,
     PromoteTaskPriorityCommand,
     RemoveTaskFromDailyPlanCommand,
+    ReopenTaskCommand,
     UnlinkTaskFromGoalCommand,
     UpdateGoalCommand,
     UpdateTaskCommand,
@@ -59,6 +60,7 @@ from apps.tasks.application.use_cases.tasks import (
     MarkTaskAsDoing,
     MarkTaskAsDone,
     PromoteTaskPriority,
+    ReopenTask,
     UpdateTask,
 )
 from apps.tasks.domain.exceptions import (
@@ -66,6 +68,7 @@ from apps.tasks.domain.exceptions import (
     DailyPlanNotFound,
     GoalNotFound,
     TaskAlreadyDone,
+    TaskNotCompleted,
     TaskNotFound,
 )
 from apps.tasks.domain.value_objects import (
@@ -378,6 +381,72 @@ def test_task_status_and_priority_transitions(tasks: FakeTaskRepository) -> None
         MarkTaskAsDoing(tasks, FakeClock()).execute(
             MarkTaskAsDoingCommand(task_id=details.id.value, user_id=OWNER)
         )
+
+
+def test_mark_task_as_done_stores_the_completion_timestamp(
+    tasks: FakeTaskRepository,
+) -> None:
+    details = _create_task(tasks)
+    completed_at = datetime(2026, 1, 16, 8, tzinfo=UTC)
+
+    done = MarkTaskAsDone(tasks, FakeClock(completed_at)).execute(
+        MarkTaskAsDoneCommand(task_id=details.id.value, user_id=OWNER)
+    )
+
+    assert done.status is TaskStatus.DONE
+    assert done.completed_at == completed_at
+    assert done.updated_at == completed_at
+    # The stored aggregate carries it too, not just the returned projection.
+    assert tasks.tasks[details.id].completed_at == completed_at
+
+
+def test_reopen_task_returns_a_completed_task_to_the_backlog(
+    tasks: FakeTaskRepository,
+) -> None:
+    details = _create_task(tasks)
+    MarkTaskAsDone(tasks, FakeClock()).execute(
+        MarkTaskAsDoneCommand(task_id=details.id.value, user_id=OWNER)
+    )
+
+    reopened = ReopenTask(tasks, FakeClock()).execute(
+        ReopenTaskCommand(task_id=details.id.value, user_id=OWNER)
+    )
+
+    assert reopened.status is TaskStatus.TODO
+    assert reopened.completed_at is None
+    assert reopened.name == details.name
+    assert tasks.tasks[details.id].status is TaskStatus.TODO
+    assert tasks.tasks[details.id].completed_at is None
+
+
+def test_reopen_task_refuses_a_task_that_is_not_completed(
+    tasks: FakeTaskRepository,
+) -> None:
+    details = _create_task(tasks)
+
+    with pytest.raises(TaskNotCompleted):
+        ReopenTask(tasks, FakeClock()).execute(
+            ReopenTaskCommand(task_id=details.id.value, user_id=OWNER)
+        )
+    assert tasks.tasks[details.id].status is TaskStatus.TODO
+
+
+def test_reopen_task_is_owner_scoped(tasks: FakeTaskRepository) -> None:
+    details = _create_task(tasks, user_id=STRANGER)
+    MarkTaskAsDone(tasks, FakeClock()).execute(
+        MarkTaskAsDoneCommand(task_id=details.id.value, user_id=STRANGER)
+    )
+
+    with pytest.raises(TaskNotFound):
+        ReopenTask(tasks, FakeClock()).execute(
+            ReopenTaskCommand(task_id=details.id.value, user_id=OWNER)
+        )
+    with pytest.raises(TaskNotFound):
+        ReopenTask(tasks, FakeClock()).execute(
+            ReopenTaskCommand(task_id=uuid4(), user_id=OWNER)
+        )
+    assert tasks.tasks[details.id].status is TaskStatus.DONE
+    assert tasks.tasks[details.id].completed_at is not None
 
 
 # --- goal use cases --------------------------------------------------------

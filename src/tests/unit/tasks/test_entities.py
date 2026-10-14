@@ -12,6 +12,7 @@ from apps.tasks.domain.exceptions import (
     DailyPlanNotFound,
     TaskAlreadyDone,
     TaskAlreadyInPlan,
+    TaskNotCompleted,
 )
 from apps.tasks.domain.value_objects import (
     DailyPlanId,
@@ -24,6 +25,7 @@ from apps.tasks.domain.value_objects import (
     TaskStatus,
     UserId,
 )
+from tests.unit.tasks.fakes import FakeClock
 
 pytestmark = pytest.mark.unit
 
@@ -122,6 +124,83 @@ def test_task_status_transitions() -> None:
         task.mark_as_done(now=LATER)
     with pytest.raises(TaskAlreadyDone):
         task.mark_as_doing(now=LATER)
+
+
+def test_task_starts_without_a_completion_timestamp() -> None:
+    assert _task().completed_at is None
+    # A task born completed is completed as of its creation, so the status and
+    # the stamp can never disagree.
+    assert _task(status=TaskStatus.DONE).completed_at == NOW
+
+
+def test_mark_as_done_stamps_the_clock_time() -> None:
+    task = _task()
+    clock = FakeClock(LATER)
+
+    task.mark_as_done(now=clock.now())
+
+    assert task.status is TaskStatus.DONE
+    assert task.completed_at == LATER
+    # One reading of the clock for both fields: a task cannot be completed at a
+    # different instant than it was saved.
+    assert task.completed_at == task.updated_at
+    assert task.completed_at is not task.created_at
+
+
+def test_mark_as_done_rejects_a_naive_timestamp() -> None:
+    task = _task()
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        task.mark_as_done(now=datetime(2026, 1, 6, 9))
+    assert task.completed_at is None
+
+
+def test_reopen_returns_a_completed_task_to_the_backlog() -> None:
+    task = _task()
+    task.mark_as_done(now=LATER)
+    clock = FakeClock(NOW)
+
+    task.reopen(now=clock.now())
+
+    assert task.status is TaskStatus.TODO
+    assert task.completed_at is None
+    assert task.updated_at == NOW
+
+
+def test_reopen_keeps_the_assistant_verdict_and_allows_a_second_completion() -> None:
+    task = _task()
+    task.mark_llm_checked()
+    task.mark_as_done(now=LATER)
+
+    task.reopen(now=NOW)
+    assert task.is_checked_by_llm is True
+    assert task.needs_llm_evaluation is False
+
+    task.mark_as_done(now=LATER)
+    assert task.completed_at == LATER
+
+
+def test_reopen_requires_a_completed_task() -> None:
+    task = _task()
+
+    with pytest.raises(TaskNotCompleted):
+        task.reopen(now=LATER)
+    assert task.status is TaskStatus.TODO
+
+    task.mark_as_doing(now=LATER)
+    with pytest.raises(TaskNotCompleted):
+        task.reopen(now=LATER)
+    assert task.status is TaskStatus.DOING
+
+
+def test_reopen_rejects_a_naive_timestamp() -> None:
+    task = _task()
+    task.mark_as_done(now=LATER)
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        task.reopen(now=datetime(2026, 1, 6, 9))
+    assert task.status is TaskStatus.DONE
+    assert task.completed_at == LATER
 
 
 def test_task_promote_priority_saturates_at_high() -> None:

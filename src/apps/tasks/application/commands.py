@@ -116,6 +116,14 @@ class MarkTaskAsDoneCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class ReopenTaskCommand:
+    """Input required to send a completed task back to the backlog."""
+
+    task_id: UUID
+    user_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
 class PromoteTaskPriorityCommand:
     """Input required to raise the importance of a carried-over task."""
 

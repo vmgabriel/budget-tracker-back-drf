@@ -15,6 +15,7 @@ from apps.tasks.application.use_cases.tasks.mark_task_as_done import MarkTaskAsD
 from apps.tasks.application.use_cases.tasks.promote_task_priority import (
     PromoteTaskPriority,
 )
+from apps.tasks.application.use_cases.tasks.reopen_task import ReopenTask
 from apps.tasks.application.use_cases.tasks.update_task import UpdateTask
 
 __all__ = (
@@ -27,5 +28,6 @@ __all__ = (
     "MarkTaskAsDoing",
     "MarkTaskAsDone",
     "PromoteTaskPriority",
+    "ReopenTask",
     "UpdateTask",
 )
