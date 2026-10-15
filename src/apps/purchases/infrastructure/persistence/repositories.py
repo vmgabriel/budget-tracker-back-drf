@@ -5,6 +5,7 @@ no persistence concern (blank strings, enum values, related managers) leaks into
 the application layer.
 """
 
+from datetime import datetime
 from typing import Any
 
 from django.db import IntegrityError
@@ -125,6 +126,16 @@ class DjangoShoppingListRepository(ShoppingListRepository):
         if not updated:
             raise ShoppingListNotFound("Shopping list not found.")
 
+    def get_archived_candidates(self, completed_before: datetime) -> list[ShoppingList]:
+        """Return active lists already completed by ``completed_before``."""
+        models = ShoppingListModel.objects.filter(
+            is_active=True,
+            status=ItemStatus.PURCHASED.value,
+            completed_at__isnull=False,
+            completed_at__lte=completed_before,
+        )
+        return [self._to_domain(model) for model in models]
+
     @staticmethod
     def _to_model(shopping_list: ShoppingList) -> ShoppingListModel:
         return ShoppingListModel(
@@ -188,6 +199,30 @@ class DjangoWishlistRepository(WishlistRepository):
         model.save(update_fields=("name", "status", "is_active", "completed_at"))
         wishlist.id = WishlistId(model.pk)
         return wishlist
+
+    def soft_delete(self, wishlist_id: WishlistId) -> None:
+        updated = WishlistModel.objects.filter(pk=wishlist_id.value).update(
+            is_active=False
+        )
+        if not updated:
+            raise WishlistNotFound("Wishlist not found.")
+
+    def restore(self, wishlist_id: WishlistId) -> None:
+        updated = WishlistModel.objects.filter(pk=wishlist_id.value).update(
+            is_active=True
+        )
+        if not updated:
+            raise WishlistNotFound("Wishlist not found.")
+
+    def get_archived_candidates(self, completed_before: datetime) -> list[Wishlist]:
+        """Return active wishlists already completed by ``completed_before``."""
+        models = WishlistModel.objects.filter(
+            is_active=True,
+            status=ItemStatus.PURCHASED.value,
+            completed_at__isnull=False,
+            completed_at__lte=completed_before,
+        )
+        return [self._to_domain(model) for model in models]
 
     @staticmethod
     def _to_model(wishlist: Wishlist) -> WishlistModel:
