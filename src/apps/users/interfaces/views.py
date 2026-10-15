@@ -52,6 +52,7 @@ from apps.users.interfaces.serializers import (
     UserSerializer,
 )
 from config.serializers import ERROR_RESPONSES
+from shared.infrastructure.throttling import LoginRateThrottle, RegisterRateThrottle
 
 
 def _user_response(user: object) -> Response:
@@ -119,6 +120,11 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer  # type: ignore[assignment]
     permission_classes = (AllowAny,)  # type: ignore[assignment]
     authentication_classes = ()
+    # The default anonymous budget (100/hour) is far too generous for an
+    # endpoint that accepts a password: this is the limit that makes
+    # credential stuffing across accounts impractical. The view stays
+    # unauthenticated, so the counter is keyed by client address.
+    throttle_classes = (LoginRateThrottle,)
 
     @extend_schema(
         request=CustomTokenObtainPairSerializer,
@@ -177,6 +183,9 @@ class RegisterView(APIView):
 
     permission_classes = (AllowAny,)
     authentication_classes = ()
+    # Mass account creation is a resource-abuse and spam vector, so it gets its
+    # own much tighter budget than the platform-wide anonymous limit.
+    throttle_classes = (RegisterRateThrottle,)
 
     @extend_schema(
         request=RegistrationSerializer,
