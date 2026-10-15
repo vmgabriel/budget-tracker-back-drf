@@ -5,6 +5,7 @@ use cases never see a storage concern. Adapters live under
 ``purchases/infrastructure``.
 """
 
+from datetime import datetime
 from typing import Protocol
 
 from apps.purchases.domain.entities import (
@@ -57,6 +58,14 @@ class ShoppingListRepository(Protocol):
         """Bring a soft-deleted shopping list back."""
         ...
 
+    def get_archived_candidates(self, completed_before: datetime) -> list[ShoppingList]:
+        """Return active shopping lists completed at or before ``completed_before``.
+
+        These are only candidates: whether one is stale enough to archive
+        depends on a per-user delay the repository cannot know.
+        """
+        ...
+
 
 class WishlistRepository(Protocol):
     """Storage operations required by wishlist use cases.
@@ -79,6 +88,18 @@ class WishlistRepository(Protocol):
 
     def update(self, wishlist: Wishlist) -> Wishlist:
         """Persist changes made to an existing wishlist."""
+        ...
+
+    def soft_delete(self, wishlist_id: WishlistId) -> None:
+        """Hide a wishlist from its owner's default view without discarding it."""
+        ...
+
+    def get_archived_candidates(self, completed_before: datetime) -> list[Wishlist]:
+        """Return active wishlists completed at or before ``completed_before``.
+
+        These are only candidates: whether one is stale enough to archive
+        depends on a per-user delay the repository cannot know.
+        """
         ...
 
 
