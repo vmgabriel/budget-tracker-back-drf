@@ -955,9 +955,8 @@ records when that became true. It is derived, never set by hand:
   date and archive it a week later.
 - The domain exposes `should_archive(current_date, archive_delay)` as a pure
   predicate for a completed list older than the delay (default 7 days, from
-  `PURCHASES_DEFAULTS["ARCHIVE_DELAY_DAYS"]`). The periodic sweep that actually
-  soft-deletes such lists is not wired to a Celery beat schedule yet, so nothing
-  is archived automatically today.
+  `PURCHASES_DEFAULTS["ARCHIVE_DELAY_DAYS"]`). A nightly Celery Beat entry,
+  `archive-completed-lists-daily` at 03:00, runs the sweep.
 
 ### Wishlist
 
@@ -1016,6 +1015,7 @@ The task functions are:
 - `generate_weekly_summary(user_id, target_date)`
 - `generate_monthly_summary(user_id, target_date)`
 - `reconcile_user_dashboards()` (scheduled daily by Celery Beat)
+- `archive_completed_lists_celery()` (scheduled daily by Celery Beat, 03:00)
 
 They use ISO date strings and UUID strings at the broker boundary. Summary
 identity is unique on `(user, period, date)`, and repository writes use an
@@ -1031,6 +1031,25 @@ it refreshes the current month for every active user so a day with no new
 transaction still receives zero-valued daily and rollup snapshots. The
 Compose `celery_beat` service is part of the default stack; an external
 scheduler can call the same task in a larger deployment.
+
+`archive_completed_lists_celery` is the archival sweep for the purchases
+context. Each night it selects the shopping lists and wishlists that are still
+active but already completed, asks the domain whether each has outlived its
+delay, and soft-deletes the ones that have. Two properties are worth knowing:
+
+- **It re-reads a candidate's items before deciding.** Completion is a claim
+  about every item, and the candidate query does not hydrate them. Skipping that
+  step would make every list look like it had nothing bought on it, and the
+  sweep would archive nothing at all.
+- **It only ever reads active rows and writes a one-way flag**, so a retry after
+  a partial run archives whatever the first attempt missed and re-touches
+  nothing. The task logs the counts it examined and archived.
+
+The delay comes from `ArchiveDelayReader`, a port that currently answers with
+`PURCHASES_DEFAULTS["ARCHIVE_DELAY_DAYS"]` for every user. It is the seam where
+a per-user preference would be introduced; until then the 7-day default applies
+uniformly. A corrupt stored value falls back to the default rather than raising
+out of a periodic job.
 
 For local integration tests, `CELERY_TASK_ALWAYS_EAGER=true` executes tasks
 synchronously and `CELERY_TASK_EAGER_PROPAGATES=true` exposes task failures.
