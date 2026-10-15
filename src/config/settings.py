@@ -89,6 +89,10 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves collected static files straight from the container, so no separate
+    # web server or CDN is required for a single-host deployment. It must stay
+    # above everything that could generate a response using static URLs.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -158,8 +162,53 @@ TIME_ZONE = env("DJANGO_TIME_ZONE", default="UTC")
 USE_I18N = True
 USE_TZ = True
 
+
+def _path_setting(name: str, default: Path) -> Path:
+    """Read a filesystem path from the environment.
+
+    An empty or whitespace-only value counts as unset. .env files routinely
+    carry commented-out or blank entries, and Path("") silently resolves to the
+    current directory, which would make Django collect static files into the
+    repository instead of the intended location.
+    """
+    value = env.str(name, default="").strip()
+    return Path(value) if value else default
+
+
 STATIC_URL = "static/"
-STATIC_ROOT = PROJECT_ROOT / "staticfiles"
+STATIC_ROOT = _path_setting("DJANGO_STATIC_ROOT", default=PROJECT_ROOT / "staticfiles")
+
+# Uploaded files (avatars, rental documents) are served by the web container
+# from MEDIA_ROOT, which the Compose production stack mounts from a named
+# volume so they survive container replacement. A single-node disk is fine for
+# this project; see the Deployment section of the README for moving to S3 or
+# MinIO when the file volume outgrows one host.
+MEDIA_URL = env.str("DJANGO_MEDIA_URL", default="media/")
+MEDIA_ROOT = _path_setting("DJANGO_MEDIA_ROOT", default=PROJECT_ROOT / "media")
+
+# Static files are served by WhiteNoise: compressed on the fly (gzip, and
+# brotli when the client advertises it). The manifest storage hashes every
+# filename on collectstatic, so the production cache header is immutable and
+# safe to hand to a CDN. Development serves unhashed names, so it must not
+# cache them at all or an edit would not show up until the browser gave up.
+WHITENOISE_MAX_AGE = env.int(
+    "DJANGO_STATIC_MAX_AGE",
+    default=(60 * 60 * 24 * 365) if ENVIRONMENT == "production" else 0,
+)
+
+STORAGES: dict[str, dict[str, Any]] = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": (
+            "whitenoise.storage.CompressedManifestStaticFilesStorage"
+            if ENVIRONMENT == "production"
+            else "django.contrib.staticfiles.storage.StaticFilesStorage"
+        )
+    },
+}
+# An unhashed storage makes collectstatic fail loudly in production instead of
+# silently emitting assets whose names change whenever their content does.
+WHITENOISE_KEEP_ONLY_HASHED_FILES = ENVIRONMENT == "production"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 APPEND_SLASH = True
