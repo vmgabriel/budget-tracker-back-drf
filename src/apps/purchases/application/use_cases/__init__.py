@@ -1,0 +1,56 @@
+"""Every purchases use case, re-exported for the composition root."""
+
+from apps.purchases.application.use_cases.shopping_lists import (
+    AddItemToShoppingList,
+    AddTagsToItem,
+    CreateShoppingList,
+    DeleteShoppingListItem,
+    GetShoppingList,
+    ListInactiveShoppingLists,
+    ListUserShoppingLists,
+    MarkItemAsPurchased,
+    RemoveTagsFromItem,
+    RestoreShoppingList,
+    SoftDeleteShoppingList,
+    UpdateShoppingList,
+    UpdateShoppingListItem,
+)
+from apps.purchases.application.use_cases.tags import CreateTag, ListTags
+from apps.purchases.application.use_cases.wishlists import (
+    AddItemToWishlist,
+    AddTagsToWishlistItem,
+    DeleteWishlistItem,
+    GetOrCreateWishlist,
+    GetWishlist,
+    MarkWishlistItemAsPurchased,
+    RemoveTagsFromWishlistItem,
+    UpdateWishlist,
+    UpdateWishlistItem,
+)
+
+__all__ = (
+    "AddItemToShoppingList",
+    "AddItemToWishlist",
+    "AddTagsToItem",
+    "AddTagsToWishlistItem",
+    "CreateShoppingList",
+    "CreateTag",
+    "DeleteShoppingListItem",
+    "DeleteWishlistItem",
+    "GetOrCreateWishlist",
+    "GetShoppingList",
+    "GetWishlist",
+    "ListInactiveShoppingLists",
+    "ListTags",
+    "ListUserShoppingLists",
+    "MarkItemAsPurchased",
+    "MarkWishlistItemAsPurchased",
+    "RemoveTagsFromItem",
+    "RemoveTagsFromWishlistItem",
+    "RestoreShoppingList",
+    "SoftDeleteShoppingList",
+    "UpdateShoppingList",
+    "UpdateShoppingListItem",
+    "UpdateWishlist",
+    "UpdateWishlistItem",
+)
