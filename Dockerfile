@@ -48,4 +48,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/readyz || exit 1
 
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "2", "--timeout", "30", "--access-logfile", "-", "--error-logfile", "-"]
+# The application server is configured entirely by a checked-in file rather
+# than by flags here, so a bare `docker run` is already production-shaped and
+# the same file can be validated with `gunicorn --check-config`.
+CMD ["gunicorn", "--config=/app/src/config/gunicorn.conf.py", "config.wsgi:application"]

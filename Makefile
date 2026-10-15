@@ -3,10 +3,14 @@ SHELL := /bin/bash
 
 COMPOSE ?= docker compose
 ENV_FILE := .env
+# Production adds docker-compose.prod.yml: no published database ports, resource
+# limits, named media volume, and the production Gunicorn config.
+PROD_COMPOSE ?= $(COMPOSE) -f docker-compose.yml -f docker-compose.prod.yml
+BACKUP_DIR ?= $(CURDIR)/backups
 
 .PHONY: help install check-env build up repair down stop logs migrate makemigrations migrations-check \
 	shell superuser token refresh-token backfill-profiles test test-unit test-integration lint format \
-	check schema collectstatic clean
+	check schema collectstatic clean prod-build prod-up prod-down prod-logs prod-release backup-db
 
 help: ## Show the available commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -109,6 +113,29 @@ schema: ## Validate and generate the OpenAPI schema
 
 collectstatic: check-env ## Collect static assets inside the web container
 	$(COMPOSE) exec web python manage.py collectstatic --noinput
+
+# --- Production (docker-compose.yml + docker-compose.prod.yml) --------------
+
+prod-build: check-env ## Build the runtime images for the production stack
+	$(PROD_COMPOSE) build
+
+prod-up: check-env ## Start the hardened production stack
+	$(PROD_COMPOSE) up -d --remove-orphans
+
+prod-down: ## Stop the production stack (volumes are preserved)
+	$(PROD_COMPOSE) down
+
+prod-logs: ## Follow the production stack logs
+	$(PROD_COMPOSE) logs --follow --tail=100
+
+prod-release: check-env ## Build, run release jobs, then start the production stack
+	$(PROD_COMPOSE) build
+	$(PROD_COMPOSE) run --rm web python manage.py migrate --noinput
+	$(PROD_COMPOSE) run --rm web python manage.py collectstatic --noinput
+	$(PROD_COMPOSE) up -d --remove-orphans
+
+backup-db: ## Write a timestamped pg_dump into BACKUP_DIR (default ./backups) and prune old ones
+	BACKUP_DIR=$(BACKUP_DIR) ./scripts/backup_db.sh
 
 clean: ## Remove local caches and build artifacts
 	@find . -type d -name __pycache__ -prune -exec rm -rf {} +
