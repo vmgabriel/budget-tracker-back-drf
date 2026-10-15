@@ -250,6 +250,16 @@ Important settings:
 | `DJANGO_CSRF_COOKIE_SECURE` | Mark Django admin CSRF cookies secure |
 | `DJANGO_TRUST_PROXY_HEADERS` | Trust `X-Forwarded-Proto` behind a controlled proxy |
 | `DJANGO_SECURE_HSTS_SECONDS` | Optional HTTP Strict Transport Security duration |
+| `DJANGO_STATIC_ROOT` / `DJANGO_MEDIA_ROOT` | Where WhiteNoise reads static files from and where uploads are written; the production Compose stack points both at named volumes |
+| `DJANGO_STATIC_MAX_AGE` | Cache lifetime in seconds for hashed static files |
+| `GUNICORN_WORKERS` | Optional worker count override; leave unset to derive `(2 * visible CPUs) + 1` |
+| `WEB_PORT` / `WEB_BIND_ADDRESS` | Host port and bind address published for the web service |
+| `BACKUP_DIR` / `RETENTION_DAYS` | Destination and retention window for `scripts/backup_db.sh` |
+
+The production resource ceilings (`WEB_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`,
+`DATA_MEMORY_LIMIT`, `CELERY_CONCURRENCY`, `DB_MAX_CONNECTIONS`,
+`REDIS_MAXMEMORY`, and their CPU counterparts) are documented in the
+[Deployment](#deployment) section.
 
 For local SQL inspection, set `DJANGO_DEBUG=true`, `DJANGO_LOG_QUERIES=true`,
 and use `DJANGO_LOG_LEVEL=DEBUG`. Query logging adds overhead and is rejected
@@ -1177,6 +1187,8 @@ Useful Make targets include:
 | `make token` / `make refresh-token` | Generate JWTs from the running container |
 | `make test-unit` / `make test-integration` | Run the isolated test layers |
 | `make test` | Run both test layers |
+| `make prod-release` / `make prod-up` / `make prod-logs` | Build, migrate, collect static, and run the hardened production stack |
+| `make backup-db` | Timestamped `pg_dump` into `BACKUP_DIR` with 7-day retention |
 
 ## Performance
 
@@ -1234,20 +1246,177 @@ Before an internet-facing deployment:
 
 ## Deployment
 
-### Release sequence
+### Production stack
 
-Build and start the runtime image, then run explicit release steps:
+`docker-compose.prod.yml` is a production override applied on top of the
+development Compose file. The development file keeps the source tree bind-mounted
+and publishes PostgreSQL and Redis on loopback for convenience; neither belongs
+on a production host, and the override removes both:
 
 ```bash
-docker compose build
-docker compose run --rm web python manage.py migrate --noinput
-docker compose run --rm web python manage.py collectstatic --noinput
-docker compose up -d web celery_worker celery_beat
+# Development (unchanged)
+docker compose up -d
+
+# Production: hardened stack
+make prod-release          # build, migrate, collectstatic, start
+make prod-logs
+make prod-down
 ```
 
+The override changes, in order of why they matter:
+
+| Concern | Production behaviour |
+| --- | --- |
+| Exposed ports | Only the web port is published, bound to `127.0.0.1:8000` by default so a reverse proxy on the same host is the only caller. PostgreSQL (5432) and Redis (6379) have no published ports at all; they are reachable only from the Compose network. |
+| Restart policy | `restart: always` on every service, so a crash or host reboot recovers without a human. |
+| Resource limits | `deploy.resources.limits` (CPU and memory) on web, Celery worker/Beat, PostgreSQL, and Redis, with reservations for scheduling. A leaking worker now dies alone instead of dragging the host into an OOM. Tunable via `WEB_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`, `DATA_MEMORY_LIMIT`, and their CPU counterparts. |
+| Healthchecks | `web` polls `/readyz`, `db` uses `pg_isready`, and `redis` uses `redis-cli ping`. `depends_on: service_healthy` means nothing starts against an unready database. |
+| Application server | Gunicorn with the checked-in `src/config/gunicorn.conf.py` instead of ad-hoc CLI flags. |
+| Log rotation | `json-file` with `max-size`/`max-file`, because the default driver grows without bound until the disk is full. |
+| Volumes | `media_data` (uploads) and `static_data` (collected static) are named volumes, so files survive container replacement. |
+| PostgreSQL | `max_connections` is set explicitly, which is the number the Gunicorn worker/thread arithmetic has to stay under. |
+| Redis | `appendonly yes`, a `maxmemory` ceiling, and `noeviction`, because dropping a queued Celery task is worse than refusing a write. |
+| Test service | The `tester` service is re-profiled to `never`, so `--profile test` cannot start it in production by accident. |
+
+The `!override`/`!reset` merge tags require Docker Compose v2.24 or newer.
+
+### Release sequence
+
 The image is multi-stage, installs runtime dependencies only, and runs as the
-unprivileged UID/GID `10001`. Run migrations as a release job, not from every
-web replica.
+unprivileged UID/GID `10001`. Migrate and collect static files as release jobs,
+before the new web replicas start, not from every container:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  run --rm web python manage.py migrate --noinput
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  run --rm web python manage.py collectstatic --noinput
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  up -d --remove-orphans
+```
+
+`make prod-release` is exactly those four steps. Because `collectstatic` writes
+hashed filenames, an old replica that is still serving during the rollout keeps
+serving valid, immutable files, and the new replicas pick up the new ones when
+they start; no cache purge is required at either end.
+
+### Gunicorn
+
+`src/config/gunicorn.conf.py` is the single source of truth for the WSGI
+server. Defaults, all overridable through the environment:
+
+| Setting | Default | Reasoning |
+| --- | --- | --- |
+| `workers` | `(2 * visible CPUs) + 1`, or `GUNICORN_WORKERS` | Handlers are mostly waiting on PostgreSQL, so two workers per core keeps cores busy while one is blocked on I/O. The CPU count honours `sched_getaffinity`, so a container limited to part of the host does not size itself for the whole machine. |
+| `threads` | 4 (`GUNICORN_THREADS`) | Cheap for IO-bound reads; each thread also costs one database connection. |
+| `timeout` | 60s (`GUNICORN_TIMEOUT`) | Headroom for slow reports without letting a stuck request hold a connection. Long work belongs in Celery. |
+| `graceful_timeout` | 30s (`GUNICORN_GRACEFUL_TIMEOUT`) | In-flight requests finish after a `SIGTERM`, matching a 45s Compose stop grace period. |
+| `accesslog` / `errorlog` | `-` | Docker logging drivers only capture stdout/stderr; writing to files inside the container would lose them. |
+| `loglevel` | `info` (`GUNICORN_LOG_LEVEL`) | Lower it to `warning` when the access log is too chatty. |
+| `max_requests` | 1000 + 100 jitter | Bounds the damage from slow memory growth instead of waiting for a crash. |
+
+Tuning rules of thumb:
+
+- Keep `workers * threads` comfortably below PostgreSQL `max_connections`,
+  leaving room for migrations, backups, and manual admin work.
+- Leave a core for PostgreSQL, Redis, and the Celery worker if they share the
+  host, and keep `WORKER_CPUS_LIMIT` consistent with `WEB_CPUS_LIMIT`.
+- Change one number at a time and watch p95 latency and worker CPU saturation.
+- Verify a change before shipping it: `gunicorn --check-config -c
+  src/config/gunicorn.conf.py config.wsgi:application`.
+
+### Static and media files
+
+Static assets are served by [WhiteNoise](https://whitenoise.evans.io/) from
+inside the web container, so a single host needs no second web server and no CDN
+to serve `/static/`:
+
+- In production, `STORAGES["staticfiles"]` is
+  `whitenoise.storage.CompressedManifestStaticFilesStorage`. `collectstatic`
+  hashes every filename and writes a manifest, which is what makes the
+  far-future immutable cache header (`DJANGO_STATIC_MAX_AGE`, one year by
+  default) safe. WhiteNoise also compresses on the fly (gzip, plus brotli when
+  the client advertises it).
+- In development the plain `StaticFilesStorage` is used, so edits appear
+  without a rebuild, and the static cache lifetime drops to zero because
+  unhashed filenames must not be cached.
+- Collect static files as a release step (`make prod-release`), before the web
+  container starts serving with `WHITENOISE_KEEP_ONLY_HASHED_FILES`, which
+  fails loudly if an unhashed file slipped through.
+- Put a CDN in front of `/static/` once traffic warrants it. Hashed filenames
+  mean no cache purge is needed; just lower the cache header if you want to
+  retire files sooner.
+
+Uploaded files (avatars, rental documents) live in `MEDIA_ROOT`, mounted from
+the `media_data` named volume in the production stack and from the repository
+path in development. The volume survives `docker compose down` and container
+replacement, but it is still a single disk on one host: **it is not a backup,
+and it does not scale horizontally.**
+
+For a larger deployment, move media to object storage with
+`django-storages` (S3, MinIO, or any S3-compatible endpoint), point
+`DEFAULT_FILE_STORAGE`/`STORAGES["default"]` at it, and serve files through
+short-lived signed URLs instead of the Django view. Do that before scaling the
+web tier past one host; a shared filesystem is not a substitute for object
+storage, and it is the usual cause of "works locally, loses uploads" incidents.
+
+### Database and queue operations
+
+Backups are handled by `scripts/backup_db.sh`, which writes a timestamped
+`pg_dump` in custom format and prunes old copies:
+
+```bash
+# On a host with a published database port (development layout)
+make backup-db                                   # writes to ./backups
+BACKUP_DIR=/srv/backups RETENTION_DAYS=14 make backup-db
+
+# In the production stack, where port 5432 is not published: the script runs
+# inside the database container, where pg_dump and the credentials already are.
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  exec -u root db sh -c 'BACKUP_DIR=/backups RETENTION_DAYS=7 /scripts/backup_db.sh'
+```
+
+Run it from host cron. The override mounts `./scripts` read-only into the
+database container precisely so this works without exposing the port:
+
+```cron
+# /etc/cron.d/budget-tracker-backup  (m/h dom mon dow  command)
+17 3 * * * cd /srv/life-utility && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T -u root db sh -c 'BACKUP_DIR=/backups RETENTION_DAYS=7 /scripts/backup_db.sh' >> /var/log/life-utility-backup.log 2>&1
+```
+
+Or run a dedicated backup container that shares the Compose network and mounts
+the same backup volume; the same command line works there.
+
+The script is defensive on purpose, because a backup job that fails quietly is
+worse than no job:
+
+- Custom format (`-Fc`), so restoration is `pg_restore --list` or a selective
+  `pg_restore`, not a plain SQL replay.
+- Written to a `.partial` file and moved into place only on success, so a crash
+  mid-dump never leaves a truncated archive under a name that looks valid.
+- Verified with `pg_restore --list` before it reports success.
+- Retention (`find ... -mtime "+$RETENTION_DAYS"`, default 7 days) runs *after*
+  the new dump succeeds, so a failed run can never delete the last good copy.
+- Refuses to start with less than 100 MB free, and prints the exact restore
+  command for the file it just wrote.
+
+Two things a dump cannot do on its own: **test a restore.** Periodically restore
+into a scratch database (`pg_restore --clean --if-exists --no-owner --dbname
+scratch backup_*.dump`) and confirm the row counts. And **copy dumps off the
+host** — a backup on the same disk as the database is lost by the same failure
+that took the database down. Encrypt and ship them to object storage.
+
+Alongside backups:
+
+- Monitor replication, disk, connection counts, and migration status.
+- Run at least one Celery worker and one Beat scheduler (the Compose defaults
+  provide both). Scale workers horizontally with `CELERY_CONCURRENCY`; the
+  configured prefetch multiplier of one avoids holding many jobs in one worker.
+- Monitor task failures, retries, queue latency, stale summary counts, and
+  worker memory. Alert on repeated `OperationalError` or a growing Redis queue.
+- Celery task results expire after one day by default; the database summaries,
+  not the result backend, are the durable dashboard record.
 
 ### Production environment
 
@@ -1258,42 +1427,56 @@ DJANGO_ENVIRONMENT=production
 DJANGO_DEBUG=false
 DJANGO_SECRET_KEY=<long random secret; keep stable while JWTs are valid>
 DJANGO_ALLOWED_HOSTS=api.example.com
+DJANGO_CSRF_TRUSTED_ORIGINS=https://api.example.com
 DJANGO_SECURE_SSL_REDIRECT=true
+DJANGO_SESSION_COOKIE_SECURE=true
+DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_TRUST_PROXY_HEADERS=true
 DJANGO_LOG_QUERIES=false
 DATABASE_URL=postgresql://...
 REDIS_URL=rediss://...
 ```
 
+Production settings refuse to start on `DEBUG=true`, a development secret, an
+empty or wildcard host list, an HTTP CSRF origin, an insecure cookie, or a
+secret shorter than 32 characters — fail at boot rather than serve traffic.
+
 Also configure `DJANGO_SECURE_HSTS_SECONDS` after confirming the entire domain is
 HTTPS-only. Keep database and Redis URLs in a secret manager, not in source
-control. `docker-compose.yml` is a useful single-host baseline; for a larger
-deployment, use managed PostgreSQL/Redis, secret injection, a process
-supervisor or orchestrator, and private service networking.
-
-### Database and queue operations
-
-- Schedule daily PostgreSQL backups and test restoration regularly, for example
-  with `pg_dump`/`pg_restore` or the managed provider's snapshot service.
-- Monitor replication, disk, connection counts, and migration status.
-- Run at least one Celery worker and one Beat scheduler (the Compose defaults
-  provide both). Scale workers horizontally with `--concurrency`; the configured
-  prefetch multiplier of one avoids holding many jobs in one worker.
-- Monitor task failures, retries, queue latency, stale summary counts, and
-  worker memory. Alert on repeated `OperationalError` or a growing Redis queue.
-- Celery task results expire after one day by default; the database summaries,
-  not the result backend, are the durable dashboard record.
+control. The single-host stack above is a deliberate baseline; for a larger
+deployment, use managed PostgreSQL/Redis, secret injection, an orchestrator, and
+private service networking.
 
 ### Health and observability
 
 - `/healthz` is a dependency-free liveness probe.
 - `/readyz` checks PostgreSQL and should be used as the load-balancer readiness
-  probe.
+  probe; it is also the Compose healthcheck for the web container.
 - Timestamped application, Django, and Celery logs go to stdout/stderr and can
-  be collected by the platform's log agent.
+  be collected by the platform's log agent. Gunicorn writes both streams there
+  too, and the Compose log driver is capped so they cannot fill the disk.
 - Use request IDs and centralized log storage at the reverse proxy/platform
   layer; the application error handler deliberately does not expose stack traces
   to clients.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request
+against it, in four jobs:
+
+| Job | Runs | Notes |
+| --- | --- | --- |
+| `lint` | `make lint` | Ruff, `black --check`, and mypy. |
+| `unit` | `make test-unit` | Database-free and fast, run directly on the runner instead of in Docker, plus the architecture test that keeps the domain layer framework-free. |
+| `integration` | `make test-integration` | Runs in the Compose `tester` service against real PostgreSQL and Redis; dumps service logs on failure. |
+| `compose` | `docker compose ... config --quiet`, `py_compile` of the Gunicorn config, `bash -n` of the backup script | Catches a broken production override or an ops script that stopped parsing, neither of which fails until deploy time. |
+
+Any failing job fails the build. No credentials are needed beyond the
+throwaway values `make install` writes from the checked-in template, and the
+`test` service is never started on pull requests from forks.
+
+Locally, the same gates are `make lint`, `make test-unit`, and
+`make test-integration`.
 
 ## Development workflow
 
@@ -1365,6 +1548,16 @@ docker compose exec web python manage.py migrate --showmigrations
 
 If a previous stack has stale network attachments, `make repair` recreates the
 containers while preserving volumes.
+
+In the production stack, `db` and `redis` are reachable only from inside the
+Compose network. If a tool outside the stack cannot connect, check that it is
+using the service name (`db`, `redis`) on the project network rather than
+`localhost:5432`; there is deliberately no published port.
+
+A web container that restarts in a loop immediately after `make prod-up` is
+usually static files: production uses the hashed manifest storage, so
+`collectstatic` must run before the container serves traffic. Use
+`make prod-release`, or run the `collectstatic` release job by hand.
 
 ### Dashboard data is empty or stale
 

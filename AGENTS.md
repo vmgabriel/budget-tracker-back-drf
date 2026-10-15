@@ -157,6 +157,19 @@ make logs                 # View logs
 make repair               # Recreate containers, preserve volumes, run migrations
 ```
 
+### Production
+`docker-compose.prod.yml` overlays the development stack: no published database
+ports, resource limits, named media/static volumes, and the production Gunicorn
+config. Never run these targets against a developer stack.
+
+```bash
+make prod-release         # Build, migrate, collectstatic, then start the hardened stack
+make prod-up              # Start without the release jobs
+make prod-logs            # Follow production logs
+make prod-down            # Stop (volumes preserved)
+make backup-db            # Timestamped pg_dump into BACKUP_DIR with retention
+```
+
 ### Database
 ```bash
 make migrate              # Apply migrations

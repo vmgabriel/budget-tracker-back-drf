@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push makes an in-flight run for the same ref irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (Ruff, Black, mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Hatch
+        run: uv tool install hatch
+
+      # `make lint` is the project's own gate; it fails on the first Ruff,
+      # Black, or mypy finding, which is what CI should report.
+      - name: Run make lint
+        run: make lint
+
+  unit:
+    name: Unit tests (no database)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Hatch
+        run: uv tool install hatch
+
+      # Deliberately not run inside Docker: these tests import no Django and
+      # touch no database, so the point of the layer is that it stays fast.
+      - name: Run make test-unit
+        run: make test-unit
+
+      - name: Verify the domain layer stayed framework-free
+        run: hatch run test:pytest src/tests/unit/test_architecture.py -m unit
+
+  integration:
+    name: Integration tests (Docker tester)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create environment file
+        # `make install` copies the template. The secrets below are throwaway
+        # values that exist only for the lifetime of this job's containers.
+        run: make install
+
+      # Integration tests run through the Compose `tester` service, which
+      # starts its own database and broker, so they use the same image and
+      # PostgreSQL major version as production.
+      - name: Run make test-integration
+        run: make test-integration
+
+      - name: Print service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200 db redis
+
+      - name: Stop the services
+        if: always()
+        run: docker compose down -v
+
+  compose:
+    name: Compose configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create environment file
+        run: make install
+
+      # A broken override file only fails at deploy time otherwise. This checks
+      # that the production stack (no published database ports, resource
+      # limits, named volumes) still resolves.
+      - name: Validate the production stack configuration
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+      - name: Validate the development stack configuration
+        run: docker compose config --quiet
+
+      - name: Check the Gunicorn config parses
+        run: python3 -m py_compile src/config/gunicorn.conf.py
+
+      - name: Check the backup script is executable and parses
+        run: |
+          test -x scripts/backup_db.sh
+          bash -n scripts/backup_db.sh
