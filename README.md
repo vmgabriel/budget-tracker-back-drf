@@ -27,6 +27,7 @@ each introduced as a new bounded context inside this monolith.
 - [Profile & Settings](#profile--settings)
 - [Rentals & Property Management](#rentals--property-management)
 - [Tasks, Goals & Daily Plans](#tasks-goals--daily-plans)
+- [Shopping Lists & Wishlist](#shopping-lists--wishlist)
 - [Celery and aggregation workflow](#celery-and-aggregation-workflow)
 - [OpenAPI and Swagger](#openapi-and-swagger)
 - [Sample data](#sample-data)
@@ -80,6 +81,26 @@ each introduced as a new bounded context inside this monolith.
 - Priority promotion for carried-over tasks, saturating at `high`.
 - Fully owner-scoped: a task, goal, or plan belonging to somebody else answers
   `404`, never `403`.
+
+### Shopping lists & wishlist
+
+- Multiple named shopping lists per user, each with `high`/`medium`/`low`
+  priority, items carrying a quantity, free-text details, and `pending` or
+  `purchased` status.
+- One wishlist per user (enforced by a database constraint), whose items also
+  record a product link, an image link, a description, an estimated price, and
+  a `must_have`/`wanted`/`nice_to_have` priority.
+- A list completes when every one of its items is purchased; the completion
+  date is stamped automatically, and buying the last outstanding item is what
+  completes the list. Deleting an item that had completed a list reopens it.
+- A list is completed only when it actually holds items: an empty list never
+  completes, so a freshly created one is never mistaken for a finished one.
+- Soft delete: removing a list hides it from the default views and keeps its
+  items. Archived lists are listed separately and can be restored.
+- Tags drawn from a shared catalogue, attached to items by name and idempotent:
+  tagging the same concept twice never creates a second catalogue entry.
+- Fully owner-scoped: a list, item, or wishlist belonging to somebody else
+  answers `404`, never `403`.
 
 ### Foundation for life administration
 
@@ -887,6 +908,86 @@ with its own tasks. It drops invented task ids rather than trusting them.
 
 Editing a task's name, description, or due date resets `is_checked_by_llm`, so a
 stale assessment is never mistaken for a current one.
+
+## Shopping Lists & Wishlist
+
+All routes live under `/api/v1/purchases/` and are owner-scoped: a resource
+belonging to another user answers `404`, never `403`, so a caller cannot probe
+for the existence of somebody else's data.
+
+### Shopping lists
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `shopping-lists/` | List the caller's active lists |
+| `POST` | `shopping-lists/` | Create a list (`name`, optional `priority`) |
+| `GET` | `shopping-lists/inactive/` | List the caller's soft-deleted lists |
+| `GET` | `shopping-lists/<uuid>/` | Retrieve one list with its items |
+| `PATCH` | `shopping-lists/<uuid>/` | Rename a list or change its priority |
+| `DELETE` | `shopping-lists/<uuid>/` | Soft-delete: hides the list, keeps its items |
+| `POST` | `shopping-lists/<uuid>/restore/` | Bring a soft-deleted list back |
+| `POST` | `shopping-lists/<uuid>/add-item/` | Add an item (`name`, `quantity`, `details`) |
+| `PATCH` | `shopping-lists/<uuid>/items/<uuid>/` | Update one item |
+| `DELETE` | `shopping-lists/<uuid>/items/<uuid>/` | Delete one item |
+| `POST` | `shopping-lists/<uuid>/items/<uuid>/mark-purchased/` | Flag an item as bought |
+| `POST` | `shopping-lists/<uuid>/items/<uuid>/tags/` | Attach tags by name (`tag_names`) |
+| `DELETE` | `shopping-lists/<uuid>/items/<uuid>/tags/` | Detach tags by id (`tag_ids`) |
+
+A nested item URL is only honoured when the item really belongs to the
+addressed list, so `shopping-lists/A/items/B/` answers `404` when `B` lives in
+another one of the caller's lists.
+
+`POST`ing to `shopping-lists/` with `{"name": "Weekly groceries", "priority":
+"high"}` returns `201` and the list body. Deleting a list returns `200` with
+`is_active: false` rather than `204`, because a soft delete has a state the
+caller can act on — the list is retrievable and restorable afterwards.
+
+### Completion and archival
+
+`status` on a list means "every item has been purchased", and `completed_at`
+records when that became true. It is derived, never set by hand:
+
+- Buying the last outstanding item completes the list and stamps `completed_at`.
+- Deleting an item from a completed list reopens it and clears the date, so a
+  list never claims to be finished while it still has something to buy.
+- A list with no items is never completed. Without this rule the vacuous truth
+  of "all zero items are purchased" would give a brand-new list a completion
+  date and archive it a week later.
+- The domain exposes `should_archive(current_date, archive_delay)` as a pure
+  predicate for a completed list older than the delay (default 7 days, from
+  `PURCHASES_DEFAULTS["ARCHIVE_DELAY_DAYS"]`). The periodic sweep that actually
+  soft-deletes such lists is not wired to a Celery beat schedule yet, so nothing
+  is archived automatically today.
+
+### Wishlist
+
+One wishlist per user, enforced by a one-to-one constraint on the user. The
+first `GET` creates it; later reads return the same one.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `wishlist/` | Retrieve the caller's wishlist, creating it on first access |
+| `PATCH` | `wishlist/` | Rename the wishlist |
+| `POST` | `wishlist/add-item/` | Add a wanted product |
+| `PATCH` | `wishlist/items/<uuid>/` | Update one item |
+| `DELETE` | `wishlist/items/<uuid>/` | Delete one item |
+| `POST` | `wishlist/items/<uuid>/mark-purchased/` | Flag an item as bought |
+| `POST` | `wishlist/items/<uuid>/tags/` | Attach tags by name (`tag_names`) |
+| `DELETE` | `wishlist/items/<uuid>/tags/` | Detach tags by id (`tag_ids`) |
+
+An item accepts `name`, `link`, `image_link`, `description`, `estimated_price`
+(non-negative), and `priority` (`must_have`, `wanted`, `nice_to_have`).
+
+### Tags
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `tags/` | List the whole catalogue |
+| `POST` | `tags/` | Add an entry (`name`), idempotent |
+
+The catalogue is shared across users, and the slug is derived from the name.
+Creating a tag that already exists returns the existing row with `201` rather
+than failing, so a client can tag without first checking the catalogue.
 
 ## Celery and aggregation workflow
 
