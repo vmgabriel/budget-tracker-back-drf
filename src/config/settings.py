@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import environ
+from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
 from config.schedules import DEFAULT_DAILY_PLAN_CRON, parse_daily_plan_cron
@@ -316,6 +317,14 @@ CELERY_BEAT_SCHEDULE = {
         # A morning run that is still queued an hour later is stale, and the
         # next day's run would duplicate it.
         "options": {"expires": 60 * 60},
+    },
+    "archive-completed-lists-daily": {
+        "task": "apps.purchases.infrastructure.tasks.archive_completed_lists_celery",
+        # 03:00 local time: late enough that a list completed late yesterday
+        # is already counted, and quiet enough not to compete with the morning
+        # plan generation an hour later.
+        "schedule": crontab(hour=3, minute=0),
+        "options": {"expires": 60 * 60 * 6},
     },
 }
 
