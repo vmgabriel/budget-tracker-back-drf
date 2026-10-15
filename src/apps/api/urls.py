@@ -15,4 +15,5 @@ urlpatterns = [
     # is stated explicitly in every route: /tasks/tasks/, /tasks/goals/,
     # /tasks/daily-plans/.
     path("tasks/", include("apps.tasks.interfaces.urls")),
+    path("purchases/", include("apps.purchases.interfaces.urls")),
 ]
