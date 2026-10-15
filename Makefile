@@ -10,7 +10,8 @@ BACKUP_DIR ?= $(CURDIR)/backups
 
 .PHONY: help install check-env build up repair down stop logs migrate makemigrations migrations-check \
 	shell superuser token refresh-token backfill-profiles test test-unit test-integration lint format \
-	check schema collectstatic clean prod-build prod-up prod-down prod-logs prod-release backup-db
+	check schema collectstatic clean prod-build prod-up prod-down prod-logs prod-release backup-db \
+	check-deploy
 
 help: ## Show the available commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -124,6 +125,9 @@ prod-up: check-env ## Start the hardened production stack
 
 prod-down: ## Stop the production stack (volumes are preserved)
 	$(PROD_COMPOSE) down
+
+check-deploy: ## Run Django's deployment checks against the real production environment
+	$(PROD_COMPOSE) run --rm web python manage.py check --deploy
 
 prod-logs: ## Follow the production stack logs
 	$(PROD_COMPOSE) logs --follow --tail=100
