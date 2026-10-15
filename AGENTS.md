@@ -385,6 +385,14 @@ without any code at all.
   an absent daemon is not a transient error. Evaluation is explicit, never automatic:
   editing a task must not re-trigger it and overwrite the owner's own fields.
 
+### Purchases (`src/apps/purchases/`)
+- Shopping lists: multiple per user, with items (name, quantity, details), `high`/`medium`/`low` priority, and a derived completion state
+- Completion is derived, never set by hand: buying the last outstanding item completes the list and stamps `completed_at`; deleting an item from a completed list reopens it; an empty list is never completed
+- Soft delete with restore: `is_active` hides a list while keeping its items, and the archived lists are listed separately
+- `should_archive(current_date, archive_delay)` is a pure predicate for a completed list older than the delay; the Celery sweep that soft-deletes such lists is not wired to a beat schedule yet, so nothing is archived automatically
+- Wishlist: exactly one per user, enforced by a one-to-one database constraint rather than by the domain alone; items add a link, image link, description, estimated price, and `must_have`/`wanted`/`nice_to_have` priority
+- Shared tag catalogue attached to items by name, idempotent by name or slug
+
 ## Success Criteria for Any Change
 
 Before considering work complete:
