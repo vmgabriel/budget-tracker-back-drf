@@ -1188,6 +1188,7 @@ Useful Make targets include:
 | `make test-unit` / `make test-integration` | Run the isolated test layers |
 | `make test` | Run both test layers |
 | `make prod-release` / `make prod-up` / `make prod-logs` | Build, migrate, collect static, and run the hardened production stack |
+| `make check-deploy` | Run Django's deployment checks against the real production environment |
 | `make backup-db` | Timestamped `pg_dump` into `BACKUP_DIR` with 7-day retention |
 
 ## Performance
@@ -1201,8 +1202,9 @@ The implementation keeps expensive work out of request handlers:
 - Dashboard reads select persisted rows and do not scan transactions.
 - Celery work is split by date and period so a transaction change only refreshes
   affected rollups; each task uses database transactions and idempotent upserts.
-- Connection reuse is controlled by `DJANGO_DATABASE_CONN_MAX_AGE` and health
-  checks are enabled.
+- Connection reuse is controlled by `DJANGO_DATABASE_CONN_MAX_AGE`, health
+  checks are enabled, and queries are bounded by a server-side
+  `statement_timeout`.
 
 For large datasets, monitor query plans with `EXPLAIN ANALYZE`, tune PostgreSQL
 statistics/autovacuum, and consider a reporting read replica. Do not remove
@@ -1219,11 +1221,20 @@ The current security posture includes:
 - Parameterized Django ORM queries; user input is never interpolated into SQL.
 - Generic 500 responses with server-side exception logging.
 - `ALLOWED_HOSTS`, HSTS, proxy-header, and content-type protections in production
-  settings.
+  settings, with startup validation that refuses a weak secret, a wildcard
+  host, or `DEBUG=true`.
+- Response hardening headers (`nosniff`, frame denial, referrer and permissions
+  policy) on every response, including error paths.
+- Rate limiting on every request, with dedicated budgets for login and
+  registration, keyed on the real client address when a proxy is in front.
+- An explicit cross-origin allowlist for the browser front end, with credentialed
+  cross-origin requests refused outright.
 
 JWT API requests use the `Authorization` header and do not require CSRF
-handling. Django session settings remain relevant to the separately served
-Django admin surface; do not use those cookies as API credentials.
+handling; `CsrfViewMiddleware` is installed and governs the session-based Django
+admin, which is the surface it protects. Django session settings remain relevant
+to that separately served admin surface; do not use those cookies as API
+credentials.
 Registration and login are intentionally public JSON endpoints; protect them
 with gateway throttling, origin controls, and abuse monitoring before exposing
 them publicly. Logout cannot revoke a stateless token before its expiry, so
@@ -1236,13 +1247,19 @@ Before an internet-facing deployment:
    explicit host/origin allowlist.
 2. Put the web service behind a TLS-terminating reverse proxy and do not expose
    PostgreSQL or Redis publicly.
-3. Add gateway or DRF throttling for registration, login, and write endpoints;
-   rate limits are deployment-specific and are not silently enabled by this MVP.
-4. If a separate frontend origin is required, add a narrowly configured CORS
-   package such as `django-cors-headers`; the project intentionally does not
-   allow arbitrary cross-origin requests by default.
+3. Keep the throttles enabled and set `DJANGO_NUM_PROXIES` to the real number of
+   proxies in front of the app; see
+   [Rate limiting](#deployment) for what a wrong value costs.
+4. Keep `CORS_ALLOWED_ORIGINS` limited to the front end's exact origin. The
+   policy is in place; adding a wildcard or a loose prefix is what turns it into
+   a liability.
 5. Rotate credentials, restrict admin access, and review dependency updates.
 6. Keep detailed query logging disabled in production.
+7. Run `make check-deploy` and keep its output empty.
+
+Rate limiting and CORS are now implemented in the application (see
+[Deployment](#deployment)); what remains deployment-specific is the *tuning*,
+not the mechanism.
 
 ## Deployment
 
@@ -1420,12 +1437,14 @@ Alongside backups:
 
 ### Production environment
 
-Set at minimum:
+Production is selected with `DJANGO_ENVIRONMENT=production`; there is no
+separate settings module, and nothing about the default development
+configuration changes. Set at minimum:
 
 ```text
 DJANGO_ENVIRONMENT=production
 DJANGO_DEBUG=false
-DJANGO_SECRET_KEY=<long random secret; keep stable while JWTs are valid>
+DJANGO_SECRET_KEY=<at least 50 random characters; keep stable while tokens are valid>
 DJANGO_ALLOWED_HOSTS=api.example.com
 DJANGO_CSRF_TRUSTED_ORIGINS=https://api.example.com
 DJANGO_SECURE_SSL_REDIRECT=true
@@ -1433,17 +1452,147 @@ DJANGO_SESSION_COOKIE_SECURE=true
 DJANGO_CSRF_COOKIE_SECURE=true
 DJANGO_TRUST_PROXY_HEADERS=true
 DJANGO_LOG_QUERIES=false
+DJANGO_NUM_PROXIES=1
+CORS_ALLOWED_ORIGINS=https://bff.yourdomain.com
 DATABASE_URL=postgresql://...
 REDIS_URL=rediss://...
 ```
 
-Production settings refuse to start on `DEBUG=true`, a development secret, an
-empty or wildcard host list, an HTTP CSRF origin, an insecure cookie, or a
-secret shorter than 32 characters — fail at boot rather than serve traffic.
+Everything else has a production-shaped default. The full list, with comments,
+is in `.env.example` under "Production security".
+
+#### Generating the secret key
+
+```bash
+scripts/generate_secret_key.sh                    # prints an 86-character key
+scripts/generate_secret_key.sh --env-file         # DJANGO_SECRET_KEY=<key>
+DJANGO_SECRET_KEY=$(scripts/generate_secret_key.sh)
+```
+
+The script draws 64 bytes from the operating system CSPRNG (`secrets`), so two
+runs never produce the same value. The key signs session cookies, CSRF tokens,
+password-reset tokens, and — through SimpleJWT's `SIGNING_KEY` — the access and
+refresh tokens themselves, so anyone holding it can mint a token for any user.
+Keep it in a secret manager, out of source control, and identical across
+replicas. Rotating it invalidates every issued token and session: rotate
+deliberately, not during a release.
+
+Production settings refuse to start on a development secret, a secret shorter
+than 50 characters or with too little variety, an empty or wildcard
+`ALLOWED_HOSTS`, `DJANGO_DEBUG=true`, query logging, an HTTP CSRF or CORS
+origin, insecure cookies, or `CORS_ALLOW_CREDENTIALS=true`. The checks live in
+`src/config/validators.py`, run at import time, and name the variable and the
+fix — a half-secured process never opens a socket.
+
+`DJANGO_SECURE_HSTS_PRELOAD` defaults to on in production. Preload is
+effectively irreversible once a browser has it, so confirm every subdomain
+serves HTTPS before leaving it enabled. Keep database and Redis URLs in a secret
+manager, not in source control.
+
+#### Validating the production configuration
+
+```bash
+make check-deploy   # manage.py check --deploy, with the real production env
+```
+
+or, against an environment you have exported:
+
+```bash
+DJANGO_ENVIRONMENT=production python manage.py check --deploy
+```
+
+The target should report no issues. It covers the security settings Django can
+verify by itself: secret strength, cookie flags, HSTS, redirect and proxy
+handling, host/origin allowlists, and the presence of the CSRF middleware.
+
+#### CORS and the browser front end
+
+`house-utility-control-front` is a browser client on a different origin, so the
+API answers cross-origin requests for exactly one origin:
+
+```text
+CORS_ALLOWED_ORIGINS=https://bff.yourdomain.com
+```
+
+- Exact origins only: scheme, host, port. No wildcard, no trailing slash, and
+  no prefix matching (`https://bff.example.com.evil.test` must not match).
+- HTTPS only in production; an `http://` origin is refused at startup.
+- `CORS_ALLOW_CREDENTIALS` stays `false` and cannot be switched on in
+  production. The front end authenticates with `Authorization: Bearer <jwt>`, so
+  no cookie needs to cross origins, and allowing credentials would let a browser
+  attach ambient authority to a cross-origin call. If a future client needs
+  cookie sessions, that is a design change, not a configuration change.
+- CORS applies to `/api/...` only (`CORS_URLS_REGEX`), so the Django admin is
+  unaffected.
+- Preflight responses are cached for an hour; the origin allowlist is what
+  decides correctness.
+- `CSRF_TRUSTED_ORIGINS` is separate and only matters for the session-based
+  Django admin, never for the JWT API.
+
+Leave the list empty when the API has no browser client: every cross-origin
+request is then refused, which is the correct default for a server-to-server
+deployment.
+
+#### Rate limiting
+
+Throttling is on by default for every request, with tighter budgets on the two
+endpoints that accept untrusted input:
+
+| Scope | Default | Applies to |
+| --- | --- | --- |
+| `anon` | `100/hour` | Any unauthenticated request |
+| `user` | `1000/hour` | Any authenticated request, per account |
+| `login` | `10/minute` | `POST /api/v1/users/auth/token/` |
+| `register` | `5/hour` | `POST /api/v1/users/auth/register/` |
+
+Behavior worth knowing:
+
+- The counters live in Django's cache, which is Redis (logical database 1)
+  outside the test environment. With more than one web replica that matters:
+  a process-local cache would let each replica allow its own share.
+- Anonymous requests are keyed by client address, recovered from
+  `X-Forwarded-For` when `DJANGO_NUM_PROXIES` matches the number of proxies in
+  front of the app. **With that count wrong, every client shares one bucket and
+  a single noisy caller locks everyone out.** Behind a single TLS-terminating
+  proxy such as Caddy, it is `1`.
+- Authenticated requests are keyed by account, so a shared household or office
+  connection does not collide.
+- A view that declares its own `throttle_classes` (login and registration do)
+  replaces the platform-wide defaults for that view, and the scoped rate is the
+  one that applies.
+- Exceeding a limit returns `429` with `Retry-After`, in the standard error
+  envelope as `"code": "throttled"`. Successful attempts count too: a valid
+  login consumes the budget, which is what stops a password-spraying run from
+  simply retrying until one guess lands.
+- Raise the rates through the environment if a shared NAT legitimately exhausts
+  them; the defaults are intentionally generous for that reason.
+
+#### Response headers
+
+Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options:
+DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and a
+`Permissions-Policy` that denies camera, microphone, geolocation, payment, USB,
+and similar APIs the application never uses. They come from
+`shared.infrastructure.middleware.SecurityHeadersMiddleware`, which only fills
+in headers that are absent, so it composes with Django's own security
+middleware and with headers added by the reverse proxy. A Content Security
+Policy is deliberately absent: the same process serves the Django admin, whose
+templates would need per-page exceptions.
+
+#### Database connection handling
+
+`CONN_MAX_AGE=60` reuses connections between requests,
+`CONN_HEALTH_CHECKS=True` (Django 5.1+) verifies a reused connection before
+trusting it, and a `statement_timeout` of 30 seconds makes PostgreSQL cancel a
+runaway query instead of letting it pin a Gunicorn worker until the request
+timeout kills the process. A 5-second connect timeout applies in production
+only; set `DJANGO_CONNECT_TIMEOUT` to enforce it elsewhere, or `0` to disable.
+
+Keep `workers * threads` below PostgreSQL `max_connections`: every worker and
+thread holds a connection for up to `CONN_MAX_AGE` seconds.
 
 Also configure `DJANGO_SECURE_HSTS_SECONDS` after confirming the entire domain is
-HTTPS-only. Keep database and Redis URLs in a secret manager, not in source
-control. The single-host stack above is a deliberate baseline; for a larger
+HTTPS-only. The single-host stack above is a deliberate baseline; for a larger
 deployment, use managed PostgreSQL/Redis, secret injection, an orchestrator, and
 private service networking.
 

@@ -167,6 +167,7 @@ make prod-release         # Build, migrate, collectstatic, then start the harden
 make prod-up              # Start without the release jobs
 make prod-logs            # Follow production logs
 make prod-down            # Stop (volumes preserved)
+make check-deploy         # manage.py check --deploy with the production environment
 make backup-db            # Timestamped pg_dump into BACKUP_DIR with retention
 ```
 
@@ -184,6 +185,19 @@ make test-unit            # Fast, DB-free tests (hatch run test:pytest src/tests
 make test-integration     # Tests with DB and Celery (Docker tester container)
 make test                 # Run both test layers
 ```
+
+### Production validation
+Production is opt-in through `DJANGO_ENVIRONMENT=production`; there is no separate
+settings module. Changes to security defaults must keep `manage.py check --deploy`
+clean and must not break local or test environments.
+
+```bash
+make check-deploy         # manage.py check --deploy with the production environment
+```
+
+The startup guards in `src/config/validators.py` (secret strength, host
+allowlist, `DEBUG`, query logging) raise `ImproperlyConfigured` at import time and
+are unit-tested; keep them that way rather than moving the checks into views.
 
 Single test example:
 ```bash
