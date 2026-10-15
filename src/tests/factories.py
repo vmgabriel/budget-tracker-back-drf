@@ -15,6 +15,18 @@ from apps.dashboard.domain.value_objects import Period
 from apps.dashboard.infrastructure.persistence.models import DashboardSummary
 from apps.profile.application.config import PROFILE_DEFAULTS
 from apps.profile.infrastructure.persistence.models import ProfileModel
+from apps.purchases.domain.value_objects import (
+    ItemStatus,
+    ListPriority,
+    WishlistPriority,
+)
+from apps.purchases.infrastructure.persistence.models import (
+    ShoppingListItemModel,
+    ShoppingListModel,
+    TagModel,
+    WishlistItemModel,
+    WishlistModel,
+)
 from apps.rentals.infrastructure.persistence.models import (
     ApartmentModel,
     DocumentModel,
@@ -248,3 +260,67 @@ class DailyPlanFactory(factory.django.DjangoModelFactory):
     date = date(2026, 1, 15)
     total_hours = Decimal("0.00")
     generated_by_llm = False
+
+
+class TagFactory(factory.django.DjangoModelFactory):
+    """Create persisted tags in the shared catalogue."""
+
+    class Meta:
+        model = TagModel
+
+    name = factory.Sequence(lambda number: f"Tag {number}")
+    slug = factory.Sequence(lambda number: f"tag-{number}")
+
+
+class ShoppingListFactory(factory.django.DjangoModelFactory):
+    """Create persisted shopping lists owned by a user."""
+
+    class Meta:
+        model = ShoppingListModel
+
+    user = factory.SubFactory(UserFactory)
+    name = factory.Sequence(lambda number: f"Shopping List {number}")
+    priority = ListPriority.MEDIUM.value
+    status = ItemStatus.PENDING.value
+    is_active = True
+
+
+class ShoppingListItemFactory(factory.django.DjangoModelFactory):
+    """Create persisted items inside a shopping list."""
+
+    class Meta:
+        model = ShoppingListItemModel
+
+    shopping_list = factory.SubFactory(ShoppingListFactory)
+    name = factory.Sequence(lambda number: f"Item {number}")
+    quantity = 1
+    details = ""
+    status = ItemStatus.PENDING.value
+
+
+class WishlistFactory(factory.django.DjangoModelFactory):
+    """Create persisted wishlists owned by a user."""
+
+    class Meta:
+        model = WishlistModel
+
+    user = factory.SubFactory(UserFactory)
+    name = "My Wishlist"
+    status = ItemStatus.PENDING.value
+    is_active = True
+
+
+class WishlistItemFactory(factory.django.DjangoModelFactory):
+    """Create persisted items inside a wishlist."""
+
+    class Meta:
+        model = WishlistItemModel
+
+    wishlist = factory.SubFactory(WishlistFactory)
+    name = factory.Sequence(lambda number: f"Wish {number}")
+    link = ""
+    image_link = ""
+    description = ""
+    estimated_price = None
+    priority = WishlistPriority.WANTED.value
+    status = ItemStatus.PENDING.value
