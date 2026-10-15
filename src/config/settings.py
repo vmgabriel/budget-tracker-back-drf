@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     "apps.profile.apps.ProfileConfig",
     "apps.rentals.apps.RentalsConfig",
     "apps.tasks.apps.TasksConfig",
+    "apps.purchases.apps.PurchasesConfig",
 ]
 
 MIDDLEWARE = [
