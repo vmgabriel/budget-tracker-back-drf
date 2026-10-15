@@ -79,6 +79,15 @@ class FakeShoppingListRepository:
         shopping_list = self.shopping_lists[shopping_list_id]
         shopping_list.restore()
 
+    def get_archived_candidates(self, completed_before: datetime) -> list[ShoppingList]:
+        return [
+            shopping_list
+            for shopping_list in self.shopping_lists.values()
+            if shopping_list.is_active
+            and shopping_list.completed_at is not None
+            and shopping_list.completed_at <= completed_before
+        ]
+
 
 class FakeWishlistRepository:
     """Store wishlists in memory, enforcing one per user."""
@@ -109,6 +118,21 @@ class FakeWishlistRepository:
             raise ValueError("Cannot update an unidentified wishlist.")
         self.wishlists[wishlist.id] = wishlist
         return wishlist
+
+    def soft_delete(self, wishlist_id: WishlistId) -> None:
+        self.wishlists[wishlist_id].soft_delete()
+
+    def restore(self, wishlist_id: WishlistId) -> None:
+        self.wishlists[wishlist_id].restore()
+
+    def get_archived_candidates(self, completed_before: datetime) -> list[Wishlist]:
+        return [
+            wishlist
+            for wishlist in self.wishlists.values()
+            if wishlist.is_active
+            and wishlist.completed_at is not None
+            and wishlist.completed_at <= completed_before
+        ]
 
 
 class FakeShoppingListItemRepository:
