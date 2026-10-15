@@ -45,13 +45,8 @@ services:
     <<: *app-service
     command:
       - gunicorn
+      - --config=/app/src/config/gunicorn.conf.py
       - config.wsgi:application
-      - --bind=0.0.0.0:8000
-      - --workers=${GUNICORN_WORKERS:-3}
-      - --threads=2
-      - --timeout=30
-      - --access-logfile=-
-      - --error-logfile=-
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/readyz || exit 1"]
       interval: 30s

@@ -1,0 +1,167 @@
+# Production override for the single-host stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Compose merges this file over docker-compose.yml. The development file keeps
+# source-mounted code and published database ports for convenience; this one
+# removes both, because neither belongs on a production host.
+#
+# Requires Compose v2.24 or newer for the "!override"/"!reset" merge tags.
+name: ${COMPOSE_PROJECT_NAME:-budget-tracker}
+
+# Resource ceilings. Without them a memory leak in the worker (or a runaway
+# report) can take the whole host down with the OOM killer instead of just its
+# own container. Lower the values to fit a small VPS; raise them after
+# measuring. Memory limits are hard, so keep worker concurrency in mind:
+# gunicorn workers * threads all allocate at request time.
+x-app-resources: &app-resources
+  limits:
+    cpus: "${WEB_CPUS_LIMIT:-2}"
+    memory: "${WEB_MEMORY_LIMIT:-1g}"
+  reservations:
+    cpus: "${WEB_CPUS_RESERVE:-0.5}"
+    memory: "${WEB_MEMORY_RESERVE:-256m}"
+
+x-worker-resources: &worker-resources
+  limits:
+    cpus: "${WORKER_CPUS_LIMIT:-2}"
+    memory: "${WORKER_MEMORY_LIMIT:-2g}"
+  reservations:
+    cpus: "${WORKER_CPUS_RESERVE:-0.5}"
+    memory: "${WORKER_MEMORY_RESERVE:-512m}"
+
+x-data-resources: &data-resources
+  limits:
+    cpus: "${DATA_CPUS_LIMIT:-2}"
+    memory: "${DATA_MEMORY_LIMIT:-2g}"
+  reservations:
+    cpus: "${DATA_CPUS_RESERVE:-0.25}"
+    memory: "${DATA_MEMORY_RESERVE:-512m}"
+
+x-logging: &default-logging
+  # Bound the on-disk log footprint; without max-size the json-file driver
+  # grows until the disk is full, which is its own outage.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  web:
+    build:
+      target: runtime
+    # Replaces the development bind mount: production runs the code baked into
+    # the image, not whatever happens to be in the working tree.
+    volumes: !override
+      # Uploaded avatars and rental documents must outlive the container. Swap
+      # this for S3/MinIO (django-storages) once the file volume matters more
+      # than the operational simplicity of a local disk.
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+    command:
+      - gunicorn
+      - --config=/app/src/config/gunicorn.conf.py
+      - config.wsgi:application
+    environment:
+      DJANGO_ENVIRONMENT: production
+      DJANGO_DEBUG: "false"
+      DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT:-true}
+      DJANGO_TRUST_PROXY_HEADERS: ${DJANGO_TRUST_PROXY_HEADERS:-true}
+      DJANGO_STATIC_ROOT: /app/staticfiles
+      DJANGO_MEDIA_ROOT: /app/media
+    ports:
+      # Loopback by default: a reverse proxy on the same host terminates TLS
+      # and forwards to this port. Set WEB_BIND_ADDRESS=0.0.0.0 to publish
+      # directly (HTTPS is then the platform's responsibility).
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/readyz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      # Gunicorn needs to boot, connect to PostgreSQL, and warm up before the
+      # first probe counts; a too-short window restarts a healthy container.
+      start_period: 30s
+      retries: 3
+    restart: always
+    stop_grace_period: 45s
+    deploy:
+      resources: *app-resources
+    logging: *default-logging
+
+  celery_worker:
+    volumes: !override
+      # The worker needs MEDIA_ROOT too: assistant and reconciliation tasks
+      # read uploaded files directly.
+      - media_data:/app/media
+    command:
+      - celery
+      - --app=config
+      - worker
+      - --loglevel=${CELERY_LOG_LEVEL:-INFO}
+      - --concurrency=${CELERY_CONCURRENCY:-2}
+    environment:
+      DJANGO_ENVIRONMENT: production
+      DJANGO_DEBUG: "false"
+      DJANGO_MEDIA_ROOT: /app/media
+    restart: always
+    deploy:
+      resources: *worker-resources
+    logging: *default-logging
+
+  celery_beat:
+    environment:
+      DJANGO_ENVIRONMENT: production
+      DJANGO_DEBUG: "false"
+    restart: always
+    deploy:
+      resources: *worker-resources
+    logging: *default-logging
+
+  db:
+    # No published port. Only containers on this network can reach PostgreSQL,
+    # which is the point: an open 5432 is the first thing scanned for.
+    ports: !reset []
+    volumes: !override
+      - postgres_data:/var/lib/postgresql/data
+      # Operational tooling only, mounted read-only. This is how the backup
+      # script runs against the database without exposing port 5432; see the
+      # "Database and queue operations" section of the README.
+      - ./scripts:/scripts:ro
+    command:
+      - postgres
+      - -c
+      - max_connections=${DB_MAX_CONNECTIONS:-100}
+    restart: always
+    deploy:
+      resources: *data-resources
+    logging: *default-logging
+
+  redis:
+    # Same reasoning: the broker is not reachable from the host or the network.
+    ports: !reset []
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      # noeviction, not allkeys-lru: Celery keeps queued and scheduled tasks
+      # in Redis, and silently dropping a task is worse than a full cache.
+      - --maxmemory-policy
+      - ${REDIS_MAXMEMORY_POLICY:-noeviction}
+    restart: always
+    deploy:
+      resources: *data-resources
+    logging: *default-logging
+
+  # The tester service exists for local integration runs and lives behind the
+  # "test" profile. Re-profiling it to "never" means it cannot be started by
+  # accident in production, even with --profile test.
+  tester:
+    profiles: ["never"]
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
+  static_data:
