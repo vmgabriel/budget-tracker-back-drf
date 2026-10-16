@@ -15,6 +15,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from config.schedules import DEFAULT_DAILY_PLAN_CRON, parse_daily_plan_cron
 from config.validators import validate_production_settings
+from shared.infrastructure.logging import build_logging_config
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = BASE_DIR.parent
@@ -109,6 +110,10 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # Outermost on purpose: every record emitted while handling a request,
+    # including one from Django's own security middleware or from a view, then
+    # carries the same X-Request-ID.
+    "shared.infrastructure.middleware.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
     # Serves collected static files straight from the container, so no separate
     # web server or CDN is required for a single-host deployment. It must stay
@@ -251,7 +256,14 @@ CORS_ALLOWED_HEADERS = [
     "Content-Language",
     "Content-Type",
     "X-Requested-With",
+    # Accepted so a gateway or browser client can pass its own correlation id
+    # through; see shared.infrastructure.middleware.RequestIdMiddleware.
+    "X-Request-ID",
 ]
+# A browser front end can only read a cross-origin response header the server
+# exposes. Without this the API still returns X-Request-ID, but the BFF sees
+# null and loses the id it would need to quote in a bug report.
+CORS_EXPOSE_HEADERS = ["X-Request-ID"]
 # Preflight results are safe to cache for an hour; the origin allowlist decides
 # correctness, this only saves a round trip.
 CORS_PREFLIGHT_MAX_AGE = env.int("CORS_PREFLIGHT_MAX_AGE", default=3600)
@@ -638,42 +650,44 @@ CELERY_BEAT_SCHEDULE = {
 OLLAMA_BASE_URL = env("OLLAMA_BASE_URL", default="http://localhost:11434")
 OLLAMA_MODEL = env("OLLAMA_MODEL", default="llama3:8b")
 
-LOGGING: dict[str, Any] = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "standard": {
-            "format": "{asctime} {levelname} {name} {message}",
-            "style": "{",
-        }
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "standard",
-        }
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["console"],
-            "level": env("DJANGO_LOG_LEVEL", default="INFO"),
-            "propagate": False,
-        },
-        "celery": {
-            "handlers": ["console"],
-            "level": env("CELERY_LOG_LEVEL", default="INFO"),
-            "propagate": False,
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": env("DJANGO_LOG_LEVEL", default="INFO"),
-    },
-}
+# --- Logging ----------------------------------------------------------------
+# One JSON object per line in production, the readable format in development.
+# The format is a string rather than a boolean so an operator can pin
+# "text" while chasing a problem in production and see something legible in a
+# terminal, or "json" locally when reproducing an aggregator's parsing.
+#
+# The level default is DEBUG in development (a developer wants to see
+# everything) and INFO everywhere else. Production starting at DEBUG is never
+# right: the volume alone is a denial-of-service vector.
+DJANGO_LOG_LEVEL = env(
+    "DJANGO_LOG_LEVEL",
+    default="DEBUG" if ENVIRONMENT == "local" else "INFO",
+)
+DJANGO_LOG_FORMAT = env(
+    "DJANGO_LOG_FORMAT",
+    default="json" if ENVIRONMENT == "production" else "text",
+)
+# Optional rotating file handler for local debugging. Empty means stdout only,
+# which is what a container wants: a file inside the container is lost when the
+# container is replaced and invisible to `docker compose logs`.
+DJANGO_LOG_FILE = env.str("DJANGO_LOG_FILE", default="").strip() or None
+CELERY_LOG_LEVEL = env(
+    "CELERY_LOG_LEVEL", default=env("DJANGO_LOG_LEVEL", default="INFO")
+)
 
-if LOG_QUERIES:
-    LOGGING["loggers"]["django.db.backends"] = {
-        "handlers": ["console"],
-        "level": "DEBUG",
-        "propagate": False,
-    }
+# The per-request access line carries the same correlation id as every other
+# record for that request, which Gunicorn's own access log cannot. Off in the
+# test environment so a test asserting on log output is not racing it.
+REQUEST_LOGGING = env.bool(
+    "DJANGO_LOG_REQUESTS",
+    default=ENVIRONMENT not in {"test", "local"},
+)
+
+LOGGING: dict[str, Any] = build_logging_config(
+    level=DJANGO_LOG_LEVEL,
+    celery_level=CELERY_LOG_LEVEL,
+    json_output=DJANGO_LOG_FORMAT == "json",
+    file_path=DJANGO_LOG_FILE,
+    service=env("DJANGO_LOG_SERVICE", default="life-utility"),
+    query_logging=LOG_QUERIES,
+)
