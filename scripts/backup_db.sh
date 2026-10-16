@@ -38,9 +38,21 @@ PGUSER="${PGUSER:-${POSTGRES_USER:-budget_tracker}}"
 # never from an argument, because arguments are visible in the process list.
 : "${PGPASSWORD:=${POSTGRES_PASSWORD:-}}"
 
+# libpq reads PG* from the environment of the pg_dump process, not from this
+# shell's locals. Without an explicit export, PGHOST, PGUSER, and PGPASSWORD set
+# above stay in this shell and pg_dump falls back to a local socket with no
+# password, which is the classic "no password supplied" failure.
+export PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD
+
 # How many days of backups to keep. Old dumps are deleted after the new one is
 # written, so a failed run never removes the only good copy.
 RETENTION_DAYS="${RETENTION_DAYS:-7}"
+
+# Where the run journal goes. Cron mails nothing and a container's own logs are
+# rotated away, so a run that failed silently would leave no trace at all: this
+# file is the record an operator checks to answer "did the backup run, and did
+# it verify?".
+BACKUP_LOG="${BACKUP_LOG:-${BACKUP_DIR}/backup.log}"
 
 # Compression level for the custom format (0-9). 6 is pg_dump's default.
 COMPRESSION_LEVEL="${COMPRESSION_LEVEL:-6}"
@@ -54,6 +66,13 @@ log() { printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 fail() {
     log "ERROR: $*" >&2
     exit 1
+}
+
+# Append a line to the run journal. Written after BACKUP_DIR is validated, so a
+# misconfigured directory fails loudly instead of silently logging nowhere.
+journal() {
+    printf '%s %s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" "$2" \
+        >>"${BACKUP_LOG}" 2>/dev/null || true
 }
 
 # --------------------------------------------------------------------------
@@ -73,6 +92,12 @@ fi
 
 mkdir -p "${BACKUP_DIR}" || fail "Cannot create backup directory: ${BACKUP_DIR}"
 [[ -w "${BACKUP_DIR}" ]] || fail "Backup directory is not writable: ${BACKUP_DIR}"
+
+# The journal lives next to the dumps. Created up front and marked started, so
+# a run that dies hard (a killed container, a full disk) still leaves evidence
+# that it began.
+touch "${BACKUP_LOG}" || fail "Cannot write the run journal: ${BACKUP_LOG}"
+journal "START" "database=${PGDATABASE} retention_days=${RETENTION_DAYS}"
 
 # Enough free space for one more dump; a full disk mid-run leaves a truncated
 # file that looks like a valid backup.
@@ -111,17 +136,26 @@ mv "${TEMP_FILE}" "${BACKUP_FILE}"
 
 BACKUP_SIZE="$(du -h "${BACKUP_FILE}" | cut -f1)"
 log "Wrote ${BACKUP_FILE} (${BACKUP_SIZE})."
+journal "DUMPED" "file=${BACKUP_FILE} size=${BACKUP_SIZE}"
 
 # A dump that cannot be listed is not a backup. Verify the archive catalog
 # before declaring success.
 if command -v pg_restore >/dev/null 2>&1; then
-    if pg_restore --list "${BACKUP_FILE}" >/dev/null 2>&1; then
-        log "Verified the archive catalog with pg_restore --list."
+    if CATALOG="$(pg_restore --list "${BACKUP_FILE}" 2>&1)"; then
+        OBJECT_COUNT="$(printf '%s\n' "${CATALOG}" | grep -c '^[0-9]' || true)"
+        log "Verified the archive catalog with pg_restore --list (${OBJECT_COUNT} entries)."
+        journal "VERIFIED" "file=${BACKUP_FILE} entries=${OBJECT_COUNT}"
     else
+        # Kept out of the journal's happy path on purpose: an unverified dump is
+        # worse than no dump, because the next run's retention may prune the
+        # last good copy while this one looks like a file on disk.
+        journal "VERIFY_FAILED" "file=${BACKUP_FILE}"
+        printf '%s\n' "${CATALOG}" >&2
         fail "Archive verification failed for ${BACKUP_FILE}; treat it as unusable."
     fi
 else
     log "WARNING: pg_restore is unavailable, so the archive was not verified."
+    journal "UNVERIFIED" "file=${BACKUP_FILE} reason=pg_restore-missing"
 fi
 
 # A backup nobody has restored is a hope, not a plan. The timestamped name
@@ -129,6 +163,7 @@ fi
 cat <<EOF
 
 Restore with:
+  scripts/restore_db.sh ${BACKUP_FILE}          # --dry-run first; it lists the archive
   pg_restore --clean --if-exists --no-owner --dbname <target-database> ${BACKUP_FILE}
 
 EOF
@@ -139,10 +174,12 @@ EOF
 
 if [[ "${SKIP_PRUNE}" == "1" ]]; then
     log "Retention skipped (SKIP_PRUNE=1)."
+    journal "DONE" "file=${BACKUP_FILE} pruned=0 (SKIP_PRUNE=1)"
     exit 0
 fi
 
 if [[ ! "${RETENTION_DAYS}" =~ ^[0-9]+$ ]]; then
+    journal "FAILED" "reason=invalid RETENTION_DAYS=${RETENTION_DAYS}"
     fail "RETENTION_DAYS must be a non-negative integer, got '${RETENTION_DAYS}'."
 fi
 
@@ -153,5 +190,6 @@ DELETED="$(find "${BACKUP_DIR}" -maxdepth 1 -type f \
     -print -delete | wc -l | tr -d ' ')"
 
 log "Retention complete: ${DELETED} file(s) removed."
+journal "DONE" "file=${BACKUP_FILE} pruned=${DELETED}"
 
 exit 0
