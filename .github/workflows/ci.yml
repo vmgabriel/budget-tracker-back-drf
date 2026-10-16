@@ -33,8 +33,8 @@ jobs:
       - name: Run make lint
         run: make lint
 
-  unit:
-    name: Unit tests (no database)
+  test:
+    name: Tests (unit + integration)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,30 +46,17 @@ jobs:
       - name: Install Hatch
         run: uv tool install hatch
 
-      # Deliberately not run inside Docker: these tests import no Django and
-      # touch no database, so the point of the layer is that it stays fast.
-      - name: Run make test-unit
-        run: make test-unit
-
-      - name: Verify the domain layer stayed framework-free
-        run: hatch run test:pytest src/tests/unit/test_architecture.py -m unit
-
-  integration:
-    name: Integration tests (Docker tester)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
       - name: Create environment file
         # `make install` copies the template. The secrets below are throwaway
         # values that exist only for the lifetime of this job's containers.
         run: make install
 
-      # Integration tests run through the Compose `tester` service, which
-      # starts its own database and broker, so they use the same image and
-      # PostgreSQL major version as production.
-      - name: Run make test-integration
-        run: make test-integration
+      # `make test` is both layers: the database-free unit suite through Hatch
+      # (which includes the architecture test that keeps the domain layer
+      # framework-free), then the integration suite through the Compose `tester`
+      # service, on the same image and PostgreSQL major version as production.
+      - name: Run make test
+        run: make test
 
       - name: Print service logs on failure
         if: failure()
@@ -79,11 +66,18 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  compose:
-    name: Compose configuration
+  production:
+    name: Production gates (schema + deploy checks)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Hatch
+        run: uv tool install hatch
 
       - name: Create environment file
         run: make install
@@ -100,28 +94,49 @@ jobs:
       - name: Check the Gunicorn config parses
         run: python3 -m py_compile src/config/gunicorn.conf.py
 
-      # Guards the production hardening: every security setting Django can
-      # verify by itself must be satisfied by the settings module, without
-      # relying on a deployment's environment file.
-      - name: Check the production settings
-        env:
-          DJANGO_SETTINGS_MODULE: config.settings
-          DJANGO_ENVIRONMENT: production
-          DJANGO_DEBUG: "false"
-          DJANGO_SECRET_KEY: ci-only-production-settings-key-not-used-for-any-real-deployment-000000
-          DJANGO_ALLOWED_HOSTS: api.example.com
-          DJANGO_CSRF_TRUSTED_ORIGINS: https://api.example.com
-          DJANGO_SECURE_SSL_REDIRECT: "true"
-          DJANGO_SESSION_COOKIE_SECURE: "true"
-          DJANGO_CSRF_COOKIE_SECURE: "true"
-          DJANGO_NUM_PROXIES: "1"
-          CORS_ALLOWED_ORIGINS: https://bff.example.com
-          PYTHONPATH: src
+      # The operations scripts must at least be executable and parse. A syntax
+      # error in the backup or restore script is invisible until the day it is
+      # needed, which is the worst possible day to find it.
+      - name: Check the operations scripts parse
         run: |
-          python3 -m pip install --quiet --disable-pip-version-check -e . \
-            && python3 manage.py check --deploy
+          for script in scripts/backup_db.sh scripts/backup_loop.sh scripts/restore_db.sh; do
+            test -x "${script}"
+            bash -n "${script}"
+          done
 
-      - name: Check the backup script is executable and parses
+      # Guards the API contract: an unintended schema change (a renamed or newly
+      # required field) shows up here instead of in a client.
+      - name: Validate the OpenAPI schema
+        run: make schema
+
+      - name: Build the production image
+        run: make prod-build
+
+      # Production is opt-in through DJANGO_ENVIRONMENT=production, and the
+      # startup guards reject the template's development values (a weak secret,
+      # HTTP origins, insecure cookies) on purpose. The deploy check therefore
+      # has to run against a production-shaped environment file, which is what
+      # this step builds from the template.
+      - name: Write a production-shaped environment file
         run: |
-          test -x scripts/backup_db.sh
-          bash -n scripts/backup_db.sh
+          grep -vE '^(DJANGO_SECRET_KEY|DJANGO_ALLOWED_HOSTS|DJANGO_CSRF_TRUSTED_ORIGINS|CORS_ALLOWED_ORIGINS|DJANGO_SECURE_SSL_REDIRECT|DJANGO_SESSION_COOKIE_SECURE|DJANGO_CSRF_COOKIE_SECURE|DJANGO_DEBUG|DJANGO_ENVIRONMENT)=' .env > .env.ci
+          cat >> .env.ci <<'EOF'
+          DJANGO_SECRET_KEY=ci-only-production-settings-key-not-used-for-any-real-deployment-000000
+          DJANGO_ALLOWED_HOSTS=api.example.com
+          DJANGO_CSRF_TRUSTED_ORIGINS=https://api.example.com
+          CORS_ALLOWED_ORIGINS=https://bff.example.com
+          DJANGO_SECURE_SSL_REDIRECT=true
+          DJANGO_SESSION_COOKIE_SECURE=true
+          DJANGO_CSRF_COOKIE_SECURE=true
+          EOF
+          mv .env.ci .env
+
+      # `make check-deploy` runs `manage.py check --deploy` against the real
+      # production Compose stack, so it exercises the same settings module and
+      # override file an operator would, rather than a hand-assembled env.
+      - name: Run make check-deploy
+        run: make check-deploy
+
+      - name: Stop any containers the deploy check started
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
