@@ -11,7 +11,7 @@ BACKUP_DIR ?= $(CURDIR)/backups
 .PHONY: help install check-env build up repair down stop logs migrate makemigrations migrations-check \
 	shell superuser token refresh-token backfill-profiles test test-unit test-integration lint format \
 	check schema collectstatic clean prod-build prod-up prod-down prod-logs prod-release backup-db \
-	check-deploy
+	restore-db check-deploy
 
 help: ## Show the available commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -140,6 +140,10 @@ prod-release: check-env ## Build, run release jobs, then start the production st
 
 backup-db: ## Write a timestamped pg_dump into BACKUP_DIR (default ./backups) and prune old ones
 	BACKUP_DIR=$(BACKUP_DIR) ./scripts/backup_db.sh
+
+restore-db: ## Restore a dump after validating it: make restore-db FILE=backups/backup_*.dump [ARGS='--dry-run'|'--yes']
+	@test -n "$(FILE)" || { echo "Usage: make restore-db FILE=<dump> [ARGS='--dry-run']"; exit 1; }
+	@BACKUP_DIR=$(BACKUP_DIR) ./scripts/restore_db.sh $(ARGS) "$(FILE)"
 
 clean: ## Remove local caches and build artifacts
 	@find . -type d -name __pycache__ -prune -exec rm -rf {} +

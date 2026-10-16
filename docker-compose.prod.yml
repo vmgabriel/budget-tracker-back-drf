@@ -73,6 +73,15 @@ services:
       # needs this count to recover the client address from X-Forwarded-For
       # for rate limiting; with it wrong, every client shares one bucket.
       DJANGO_NUM_PROXIES: ${DJANGO_NUM_PROXIES:-1}
+      # Structured logs: one JSON object per line on the container's stdout,
+      # carrying the request id, user, path, and method of the record's context.
+      # Pinned here rather than left to the environment file, because a log
+      # format that is readable but unparseable is a silent outage of
+      # observability, and an operator debugging production should not have to
+      # know that a value in .env changed it.
+      DJANGO_LOG_FORMAT: json
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+      DJANGO_LOG_REQUESTS: ${DJANGO_LOG_REQUESTS:-true}
       # Explicit origin allowlist for the browser front end. Empty means no
       # cross-origin browser request is answered.
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
@@ -111,6 +120,12 @@ services:
       DJANGO_DEBUG: "false"
       DJANGO_MEDIA_ROOT: /app/media
       DJANGO_NUM_PROXIES: ${DJANGO_NUM_PROXIES:-1}
+      # The worker writes to the same stream in the same shape, so a record can
+      # be found by its request id or user whether the web process or this one
+      # emitted it.
+      DJANGO_LOG_FORMAT: json
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+      DJANGO_LOG_SERVICE: life-utility-worker
     restart: always
     deploy:
       resources: *worker-resources
@@ -120,6 +135,9 @@ services:
     environment:
       DJANGO_ENVIRONMENT: production
       DJANGO_DEBUG: "false"
+      DJANGO_LOG_FORMAT: json
+      DJANGO_LOG_LEVEL: ${DJANGO_LOG_LEVEL:-INFO}
+      DJANGO_LOG_SERVICE: life-utility-beat
     restart: always
     deploy:
       resources: *worker-resources
@@ -168,8 +186,41 @@ services:
   tester:
     profiles: ["never"]
 
+  # Scheduled database backups. A sidecar rather than host cron, so the backup
+  # survives a host that has no cron installed, and so its cadence travels with
+  # the stack instead of living in /etc/cron.d where nothing can check it.
+  #
+  # A sleep loop is used rather than cron: the postgres image has no cron
+  # daemon, and adding one means a second image and a second thing to keep
+  # patched. The loop script is mounted read-only like every other script, so
+  # the backup is exactly the command an operator would run by hand.
+  backup:
+    image: postgres:16-alpine
+    profiles: ["backup"]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-budget_tracker}
+      PGUSER: ${POSTGRES_USER:-budget_tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      BACKUP_DIR: /backups
+      RETENTION_DAYS: ${RETENTION_DAYS:-7}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - backup_data:/backups
+      - ./scripts:/scripts:ro
+    command: ["/scripts/backup_loop.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+    deploy:
+      resources: *data-resources
+    logging: *default-logging
+
 volumes:
   postgres_data:
   redis_data:
   media_data:
   static_data:
+  backup_data:

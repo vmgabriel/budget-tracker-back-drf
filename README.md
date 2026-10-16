@@ -245,6 +245,11 @@ Important settings:
 | `DOCKER_CELERY_RESULT_BACKEND` | Celery result backend URL inside Compose |
 | `CELERY_TASK_ALWAYS_EAGER` | Run tasks synchronously; intended for tests only |
 | `DJANGO_LOG_QUERIES` | Optional local SQL debug cursor and query logger |
+| `DJANGO_LOG_LEVEL` | Root level; `DEBUG` in development and `INFO` in production and tests |
+| `DJANGO_LOG_FORMAT` | `json` for one JSON object per line (production), `text` for a readable terminal |
+| `DJANGO_LOG_REQUESTS` | Emit one access line per request carrying the same `X-Request-ID` |
+| `DJANGO_LOG_SERVICE` | `service` field on every JSON line, to tell web, worker, and Beat apart |
+| `DJANGO_LOG_FILE` | Optional rotating local log file in addition to stdout; empty in containers |
 | `DJANGO_SECURE_SSL_REDIRECT` | Redirect HTTP to HTTPS in production |
 | `DJANGO_SESSION_COOKIE_SECURE` | Mark Django admin session cookies secure |
 | `DJANGO_CSRF_COOKIE_SECURE` | Mark Django admin CSRF cookies secure |
@@ -254,7 +259,8 @@ Important settings:
 | `DJANGO_STATIC_MAX_AGE` | Cache lifetime in seconds for hashed static files |
 | `GUNICORN_WORKERS` | Optional worker count override; leave unset to derive `(2 * visible CPUs) + 1` |
 | `WEB_PORT` / `WEB_BIND_ADDRESS` | Host port and bind address published for the web service |
-| `BACKUP_DIR` / `RETENTION_DAYS` | Destination and retention window for `scripts/backup_db.sh` |
+| `BACKUP_DIR` / `RETENTION_DAYS` | Destination directory and retention window (days) for `scripts/backup_db.sh` |
+| `BACKUP_INTERVAL_SECONDS` | Cadence of the Compose `backup` sidecar that runs `scripts/backup_loop.sh` (default 86400) |
 
 The production resource ceilings (`WEB_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`,
 `DATA_MEMORY_LIMIT`, `CELERY_CONCURRENCY`, `DB_MAX_CONNECTIONS`,
@@ -1190,6 +1196,7 @@ Useful Make targets include:
 | `make prod-release` / `make prod-up` / `make prod-logs` | Build, migrate, collect static, and run the hardened production stack |
 | `make check-deploy` | Run Django's deployment checks against the real production environment |
 | `make backup-db` | Timestamped `pg_dump` into `BACKUP_DIR` with 7-day retention |
+| `make restore-db` | Validate and restore a dump: `make restore-db FILE=backups/backup_*.dump [ARGS='--dry-run']` |
 
 ## Performance
 
@@ -1402,8 +1409,23 @@ database container precisely so this works without exposing the port:
 17 3 * * * cd /srv/life-utility && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T -u root db sh -c 'BACKUP_DIR=/backups RETENTION_DAYS=7 /scripts/backup_db.sh' >> /var/log/life-utility-backup.log 2>&1
 ```
 
-Or run a dedicated backup container that shares the Compose network and mounts
-the same backup volume; the same command line works there.
+Or run the dedicated backup sidecar that ships with the production stack. It
+runs `scripts/backup_loop.sh`, which takes one dump immediately and then every
+`BACKUP_INTERVAL_SECONDS` (default 86400 = daily), and writes to the
+`backup_data` volume:
+
+```bash
+# Bring the production stack up with the backup sidecar enabled.
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --profile backup up -d
+
+# The loop runs backup_db.sh unchanged, so the job is identical to the manual
+# one; the sidecar only supplies the schedule. Its journal is at
+# /backups/backup.log inside the backup_data volume.
+```
+
+A `SIGTERM` stops the loop after the run in flight finishes rather than killing
+`pg_dump` mid-stream.
 
 The script is defensive on purpose, because a backup job that fails quietly is
 worse than no job:
@@ -1417,6 +1439,42 @@ worse than no job:
   the new dump succeeds, so a failed run can never delete the last good copy.
 - Refuses to start with less than 100 MB free, and prints the exact restore
   command for the file it just wrote.
+
+Restore with `scripts/restore_db.sh` (or `make restore-db`). It validates the
+archive with `pg_restore --list` before touching anything, and a dry run opens
+no database connection at all:
+
+```bash
+# Validate the archive and print the plan; changes nothing.
+scripts/restore_db.sh --dry-run backups/backup_20240101_030000.dump
+make restore-db FILE=backups/backup_20240101_030000.dump ARGS='--dry-run'
+
+# Apply it, into a scratch database first.
+PGDATABASE=budget_tracker_scratch scripts/restore_db.sh --yes backups/backup_*.dump
+```
+
+A real restore runs `pg_restore --clean --if-exists` inside a single
+transaction, so it is atomic: a failure anywhere rolls back and leaves the
+target unchanged. The target is never guessed — it comes from `--database`,
+`PGDATABASE`, or `POSTGRES_DB` — and the operator must retype the database name
+(or pass `--yes`) before anything is dropped, which is what keeps a restore
+from landing on the live database by accident.
+
+Run the restore with a `pg_restore` whose major version matches the server. A
+client older than the `pg_dump` that wrote the file refuses it
+(`unsupported version in file header`); a newer one can emit settings the
+server does not know (for example `transaction_timeout` against PostgreSQL 16).
+The `postgres:16-alpine` image the stack already runs carries a matching client,
+so restore from inside the database container, where the production override
+already mounts `./scripts`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  cp backups/backup_20240101_030000.dump db:/tmp/restore.dump
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  exec -T -e PGDATABASE=budget_tracker_scratch db \
+  /scripts/restore_db.sh --yes /tmp/restore.dump
+```
 
 Two things a dump cannot do on its own: **test a restore.** Periodically restore
 into a scratch database (`pg_restore --clean --if-exists --no-owner --dbname
@@ -1604,28 +1662,34 @@ private service networking.
 - Timestamped application, Django, and Celery logs go to stdout/stderr and can
   be collected by the platform's log agent. Gunicorn writes both streams there
   too, and the Compose log driver is capped so they cannot fill the disk.
-- Use request IDs and centralized log storage at the reverse proxy/platform
-  layer; the application error handler deliberately does not expose stack traces
-  to clients.
+- In production the logs are one JSON object per line (`timestamp`, `level`,
+  `logger`, `service`, `message`, plus the request context), so a shipper can
+  index them without a grok pattern. Development keeps the readable text format;
+  `DJANGO_LOG_FORMAT` overrides either.
+- Every request gets an `X-Request-ID`: taken from the inbound header when a
+  gateway or front end supplies one, generated otherwise, returned on the
+  response (and exposed through CORS), and bound to every log record emitted
+  while handling it. That id is what ties an access line to the view, the
+  repository, and the error that followed it. The application error handler
+  deliberately does not expose stack traces to clients.
 
 ### Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request
-against it, in four jobs:
+against it, in three jobs:
 
 | Job | Runs | Notes |
 | --- | --- | --- |
 | `lint` | `make lint` | Ruff, `black --check`, and mypy. |
-| `unit` | `make test-unit` | Database-free and fast, run directly on the runner instead of in Docker, plus the architecture test that keeps the domain layer framework-free. |
-| `integration` | `make test-integration` | Runs in the Compose `tester` service against real PostgreSQL and Redis; dumps service logs on failure. |
-| `compose` | `docker compose ... config --quiet`, `py_compile` of the Gunicorn config, `bash -n` of the backup script | Catches a broken production override or an ops script that stopped parsing, neither of which fails until deploy time. |
+| `test` | `make test` | The database-free unit layer through Hatch (including the architecture test that keeps the domain layer framework-free), then the integration layer in the Compose `tester` service against real PostgreSQL and Redis; dumps service logs on failure. |
+| `production` | `make schema`, `make check-deploy` | Validates the OpenAPI schema, both Compose files, the Gunicorn config, and the ops scripts, then runs Django's deploy checks against the real production stack with a production-shaped `.env`. |
 
 Any failing job fails the build. No credentials are needed beyond the
 throwaway values `make install` writes from the checked-in template, and the
 `test` service is never started on pull requests from forks.
 
-Locally, the same gates are `make lint`, `make test-unit`, and
-`make test-integration`.
+Locally, the same gates are `make lint`, `make test`, `make check-deploy`, and
+`make schema`.
 
 ## Development workflow
 

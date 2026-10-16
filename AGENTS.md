@@ -1,5 +1,8 @@
 # Life & Home Utility - AI Agent Instructions
 
+> See `CONTEXT.md` for current state and `.skills/` for specific domain rules
+> (`.skills/ddd-rules.md`, `.skills/testing-rules.md`, `.skills/git-rules.md`).
+
 ## Project Overview
 This is a **Personal Life & Home Management Utility** built as a **Majestic
 Monolith** (Modular Monolith with Bounded Contexts) with Django 5.2 and
@@ -20,8 +23,7 @@ inventory, and maintenance schedules; a request that does not fit a personal
 life or home administration scope should be raised rather than absorbed.
 
 When it does fit:
-- Model it as a new bounded context, not as an extension of `transactions` or
-  `rentals`.
+- Model it as a new bounded context, not as an extension of an existing one.
 - Keep contexts autonomous. A context owns its models, its rules, and its
   endpoints, and reaches other contexts only through explicit application
   ports or its own interface.
@@ -29,7 +31,7 @@ When it does fit:
   envelope) instead of duplicating it.
 - Share identity through the existing `users` and `profile` contexts; never
   introduce a second notion of "owner".
-- Enforce the mandatory four-layer separation below without exception.
+- Enforce the mandatory four-layer separation without exception.
 - Update `README.md` when the public capabilities or API contract change.
 
 ## Tech Stack
@@ -39,93 +41,23 @@ When it does fit:
 - **Time Handling**: `zoneinfo` (Python stdlib), NEVER `pytz`
 
 ## Architecture: Majestic Monolith with Bounded Contexts
+Every bounded context under `src/apps/<module>/` uses **four mandatory layers**
+— `domain/`, `application/`, `infrastructure/`, `interfaces/`. Entity, value
+object, port, and use-case conventions live in `.skills/ddd-rules.md`.
 
-### 4-Layer Separation (MANDATORY)
-Every bounded context under `src/apps/<module>/` MUST follow this structure:
-
-```
-src/apps/<module>/
-├── domain/                 # Pure Python; NO Django, DRF, Celery, or DB imports
-│   ├── entities.py         # Aggregates and entities (mutable dataclasses)
-│   ├── value_objects.py    # Immutable value objects (frozen dataclasses)
-│   ├── exceptions.py       # Domain-specific failures
-│   ── rules.py            # Optional business rules
-├── application/            # Use cases and dependency-inversion ports
-│   ├── use_cases/          # One use case per file
-│   ├── ports/              # typing.Protocol interfaces (NEVER abc.ABC)
-│   ├── config.py           # Module-specific configuration (e.g., PROFILE_DEFAULTS)
-│   └── __init__.py         # Public application exports
-├── infrastructure/         # Django ORM, adapters, Celery tasks, signals
-│   ├── persistence/
-│   │   ├── models.py       # Django models
-│   │   └── repositories.py # Implements application ports
-│   ├── adapters/           # External service adapters
-│   ├── tasks.py            # Celery tasks (if applicable)
-│   └── signals.py          # Django signals (registered in apps.py ready())
-└── interfaces/             # DRF serializers, views, URLs
-    ├── views.py
-    ├── serializers.py
-    ├── urls.py
-    └── dependencies.py     # Composition root (wires use cases with dependencies)
-```
-
-### Shared Kernel
-Generic, stable concepts live in `src/shared/` to avoid duplication across bounded contexts:
-- `shared/domain/ports/clock.py` - Clock protocol
-- `shared/infrastructure/clock.py` - SystemClock implementation
-
-### Dependency Rule
-```
-interfaces → application → domain
-infrastructure → application ports
-```
-**Domain and application code NEVER import Django, DRF, Celery, PostgreSQL, or infrastructure modules.**
-
-## Critical Design Patterns
-
-### 1. Value Objects
-- Use `@dataclass(frozen=True, slots=True)` for immutability and performance
-- Validate in `__post_init__()` and raise domain exceptions
-- Examples: `Money`, `Email`, `Timezone`, `Language`, `Currency`
-
-### 2. Entities (Aggregates)
-- Use `@dataclass(eq=False, slots=True)` (mutable by design)
-- Mutation methods take keyword-only `now: datetime` parameter injected from `Clock` port
-- Example: `user.ban(reason, now=clock.now())`, `transaction.update(amount, now=clock.now())`
-
-### 3. Ports (Dependency Inversion)
-- Use `typing.Protocol` for structural typing (duck typing)
-- NEVER use `abc.ABC` (nominal typing forces inheritance)
-- Ports live in `application/ports/` and are implemented in `infrastructure/`
-
-### 4. Time Abstraction
-- **NEVER** use `datetime.now()` directly in domain or application layers
-- Always inject and use the `Clock` port from `shared.domain.ports.clock`
-- Use `zoneinfo` (stdlib) for timezone handling, NEVER `pytz` (deprecated in Django 5.x)
-
-### 5. Configuration
-- Module-specific defaults (e.g., `PROFILE_DEFAULTS`) live in `application/config.py`
-- Domain layer has NO knowledge of default values (keeps it pure and configurable)
-
-### 6. Use Cases
-- One file per use case in `application/use_cases/`
-- Export from `application/use_cases/__init__.py`
-- Wire dependencies in `interfaces/dependencies.py` (composition root)
-- Inject all dependencies via `__init__`, never instantiate internally
-
-### 7. API Errors
-All DRF errors use a standardized envelope from `src/config/api.py`:
-```json
-{
-  "error": {
-    "code": "validation_error",
-    "message": "The request contains invalid data.",
-    "details": { "field": ["error message"] }
-  },
-  "detail": "The request contains invalid data.",
-  "field": ["error message"]
-}
-```
+- **Dependency rule**: `interfaces → application → domain`; `infrastructure →
+  application ports`. Domain and application code NEVER import Django, DRF,
+  Celery, PostgreSQL, or infrastructure modules.
+- **Shared kernel**: generic concepts live in `src/shared/` (`Clock` port +
+  `SystemClock`); reuse instead of duplicating.
+- **Time**: never call `datetime.now()` in domain/application; inject the
+  `Clock` port. Use `zoneinfo`, never `pytz`.
+- **Configuration**: module defaults live in `application/config.py`; the domain
+  has no knowledge of default values.
+- **Use cases**: one file per use case, dependencies injected via `__init__`,
+  wired in `interfaces/dependencies.py`.
+- **API errors**: all DRF errors use the standardized envelope from
+  `src/config/api.py`.
 
 ## Security & Boundaries (NON-NEGOTIABLE)
 
@@ -186,24 +118,6 @@ make test-integration     # Tests with DB and Celery (Docker tester container)
 make test                 # Run both test layers
 ```
 
-### Production validation
-Production is opt-in through `DJANGO_ENVIRONMENT=production`; there is no separate
-settings module. Changes to security defaults must keep `manage.py check --deploy`
-clean and must not break local or test environments.
-
-```bash
-make check-deploy         # manage.py check --deploy with the production environment
-```
-
-The startup guards in `src/config/validators.py` (secret strength, host
-allowlist, `DEBUG`, query logging) raise `ImproperlyConfigured` at import time and
-are unit-tested; keep them that way rather than moving the checks into views.
-
-Single test example:
-```bash
-hatch run test:pytest src/tests/unit/users/test_ban_user.py -m unit
-```
-
 ### Code Quality
 ```bash
 make lint                 # Ruff check + black --check + mypy (run before considering work done)
@@ -218,109 +132,50 @@ make token                # Generate JWT token for a user
 make refresh-token        # Refresh a JWT token
 ```
 
-## Testing Strategy
+### Production validation
+Production is opt-in through `DJANGO_ENVIRONMENT=production`; there is no separate
+settings module. Changes to security defaults must keep `manage.py check --deploy`
+clean and must not break local or test environments.
 
-### Unit Tests (`src/tests/unit/`)
-- **NO database**, NO Django imports in domain/application tests
-- Mock all external dependencies (repositories, clocks)
-- Use `FakeRepository` and `FakeClock` patterns (not `freezegun`)
-- Mark with `@pytest.mark.unit`
-- Fast execution (< 5 seconds)
+The startup guards in `src/config/validators.py` (secret strength, host
+allowlist, `DEBUG`, query logging) raise `ImproperlyConfigured` at import time and
+are unit-tested; keep them that way rather than moving the checks into views.
 
-### Integration Tests (`src/tests/integration/`)
-- Use real database (PostgreSQL in Docker)
-- Test Django ORM repositories, DRF views, Celery tasks
-- Use `factory-boy` for test data (`UserFactory`, `TransactionFactory`, etc.)
-- JWT helpers in `src/tests/factories.py` (`jwt_token_factory`)
-- Mark with `@pytest.mark.integration` and `@pytest.mark.django_db(transaction=True)`
-- For Celery tasks: use `.apply()` for synchronous testing, `pytest-celery` only for async behavior
-
-### Architecture Tests
-- `src/tests/unit/test_architecture.py` enforces domain purity (no framework imports)
-- Runs automatically with `make test-unit`
-
-### Real assistant connectivity (planned, not implemented)
-
-The assistant adapter is never exercised against a live daemon in either test
-layer: an integration run with a reachable Ollama on the network made every
-`TaskFactory()` in the suite wait on a real model, turning a 10-second run into
-over two and a half minutes, and it would charge inference to whoever ran it.
-Both layers replace the port instead.
-
-That leaves the wiring itself unverified by tests - that `OLLAMA_BASE_URL` is
-reachable from the worker container, and that the configured model is actually
-pulled. The plan is a `src/tests/llm_real/` package, deliberately excluded from
-`test-unit`/`test-integration` and never part of CI, that a developer runs by
-hand to confirm connectivity. The `llm-health` endpoint covers the same need
-without any code at all.
+## Testing
+Structure, markers, and the no-real-LLM rule live in `.skills/testing-rules.md`.
+`src/tests/unit/test_architecture.py` enforces domain purity (no framework
+imports) and runs with `make test-unit`.
 
 ## Development Workflow
 
 ### Adding a New Bounded Context
-1. Create `src/apps/<module>/{domain,application,infrastructure,interfaces}`
-2. Keep entities/value objects pure (no Django imports)
-3. Use `@dataclass(frozen=True, slots=True)` for value objects
-4. Declare ports with `typing.Protocol`
-5. Implement adapters/repositories under `infrastructure`
-6. Add serializers, views, and URLs under `interfaces`
-7. Aggregate URLs in `src/apps/api/urls.py`
-8. Add unit tests for domain/use cases, integration tests for adapters/HTTP
-9. Run `make lint`, `make test-unit`, `make test-integration`
+Create `src/apps/<module>/{domain,application,infrastructure,interfaces}` and
+follow `.skills/ddd-rules.md` (pure domain, `typing.Protocol` ports, dataclass
+rules). Add serializers, views, and URLs under `interfaces`, aggregate URLs in
+`src/apps/api/urls.py`, and cover the layers per `.skills/testing-rules.md`.
 
 ### Adding a Celery Task
-1. Put task code in `infrastructure/tasks.py`
-2. Use application use cases (don't duplicate business logic)
-3. Make writes idempotent (use natural keys for upserts)
-4. Retry only transient failures (`OperationalError`), bound retries
-5. Schedule follow-up work after transaction commits (`transaction.on_commit`)
-6. Add tests for task registration, success, idempotency, retries
+Put task code in `infrastructure/tasks.py` and call application use cases rather
+than duplicating business logic. Make writes idempotent (natural keys for
+upserts), retry only transient failures (`OperationalError`) with bounded
+retries, and schedule follow-up work with `transaction.on_commit`. Test
+registration, success, idempotency, and retries.
 
-### Adding a New Field to an Existing Model
-1. Update domain entity and value objects (if applicable)
-2. Update use cases and commands
-3. Update Django model in `infrastructure/persistence/models.py`
-4. Update repository mappers (`_to_domain`, `_to_model`)
-5. Generate migration: `make makemigrations`
-6. Apply migration: `make migrate`
-7. Update serializers and views (if field is exposed via API)
-8. Update tests
+### Adding a Field to an Existing Model
+Update the domain entity/value objects, use cases, the Django model, and the
+repository mappers (`_to_domain`, `_to_model`). Run `make makemigrations` and
+`make migrate`, then update serializers/views and tests.
 
 ## Git Workflow (NON-NEGOTIABLE)
+Full rules live in `.skills/git-rules.md`. In short: **NEVER** run `git commit`,
+`git add`, `git stash`, `git reset --hard`, `git checkout --`, `git revert`,
+`git rebase`, branch/tag creation, or any other command that writes to the git
+index, working tree, or history. The developer owns and reviews every commit.
 
-### No Automatic Git Commits
-- **NEVER execute `git commit`, `git add`, `git stash`, `git reset --hard`,
-  `git checkout --`, `git revert`, `git rebase`, or any other command that
-  writes to the git index, working tree, or history.**
-- Also forbidden: creating branches or tags (`git switch -c`, `git tag`),
-  amending (`git commit --amend`), staging partial hunks, and running
-  `git` through a Makefile target, script, or hook. If a tool offers to
-  commit on your behalf, decline.
-- The developer (human) is solely responsible for reviewing and committing
-  code, and owns the commit message and its description of business value.
-- Rationale: the developer needs time to review, test, and understand every
-  change before it enters project history. Intermediate snapshots clutter the
-  history and obscure the full scope of a feature.
-
-### What to do instead
-1. Make the code/documentation/config changes in the working tree.
-2. Run the verification suite: `make lint` and `make test` (or
-   `make test-unit` / `make test-integration` for a single layer), plus
-   `make migrations-check` and `make check` when models or settings changed.
-3. Report a summary: files modified, files added, tests added or changed, and
-   the verification results.
-4. **Stop and wait for explicit developer approval.** Do not treat the task as
-   finished, and do not start follow-up work, until it is given.
-
-### Scope
-- This rule applies to everything in this repository: application code, domain
-  and application layers, migrations, tests, documentation (README, ADRs,
-  `AGENTS.md`), and configuration or infrastructure files.
-- It applies to all bounded contexts equally, and it applies to purely
-  documentation refactors such as this one.
-- Read-only git commands (`git status`, `git diff`, `git log`, `git show`) are
-  allowed and encouraged, because reporting a diff is part of the summary.
-- Ask before running any destructive git operation, even when the change looks
-  trivially safe.
+After finishing work: run `make lint` and `make test` (plus `make
+migrations-check` and `make check` when models or settings changed), report the
+summary of files/tests/verification, then **stop and wait for explicit developer
+approval.** Do not start follow-up work until it is given.
 
 ## Gotchas & Common Pitfalls
 
@@ -356,72 +211,12 @@ without any code at all.
 - Use consistent naming (hyphens, not underscores)
 
 ## Documentation
-
-### README.md
-- Main documentation (capabilities, architecture, API reference, deployment)
-- Update when adding new modules or changing API contracts
-
-### Architecture Decision Records (ADRs)
-- Located in `docs/adr/`
-- Use standard format: Status, Context, Decision, Consequences, Alternatives
-- Record significant architectural decisions (e.g., JWT auth, pre-computed
-  dashboards, scope expansion in ADR-006)
-
-### OpenAPI Schema
-- Generated by `drf-spectacular`
-- Schema: `http://127.0.0.1:8000/api/schema/`
-- Swagger UI: `http://127.0.0.1:8000/api/docs/`
-- Regenerate with `make schema`
-
-## Current Modules
-
-### Users (`src/apps/users/`)
-- Authentication (JWT) and identity
-- Custom User model with email-based login; ban/unban functionality
-
-### Profile (`src/apps/profile/`)
-- User preferences and localization: timezone, language, currency, date format
-- Personal details: bio, avatar
-- Auto-provisioned via `post_save` signal
-- Configurable defaults in `application/config.py`
-
-### Transactions (`src/apps/transactions/`)
-- Financial operations: CRUD for income, expense, investment, and savings
-- Owner-scoped
-
-### Dashboard (`src/apps/dashboard/`)
-- Pre-computed life/financial summaries (daily, weekly, monthly)
-- Celery tasks for async aggregation
-- Idempotent tasks with retry logic
-
-### Rentals (`src/apps/rentals/`)
-- Property management: houses and apartments
-- Document management per apartment (ID cards, leases, certificates)
-- Utility meters: readings, consumption, and monthly bills
-- Payment tracking: rent payments, status derivation, monthly balance
-
-### Tasks (`src/apps/tasks/`)
-- Tasks with priority, hour estimate, due date, and `todo`/`doing`/`done` status
-- Goals (macrotasks) grouping tasks; deleting a goal keeps its tasks
-- Daily plans: one per user and day, with an hour budget and a full-day conflict
-- Overwhelmed-task flag from an injected planning policy (see `application/config.py`)
-- Assistant assistance over a local Ollama daemon: task evaluation, decomposition of
-  overwhelming tasks, and daily-plan generation. Every LLM call runs in a Celery task
-  (`infrastructure/tasks.py`); views and use cases never call the model. Failures
-  degrade to `llm_evaluation_failed` instead of raising, and are never retried, because
-  an absent daemon is not a transient error. Evaluation is explicit, never automatic:
-  editing a task must not re-trigger it and overwrite the owner's own fields.
-
-### Purchases (`src/apps/purchases/`)
-- Shopping lists: multiple per user, with items (name, quantity, details), `high`/`medium`/`low` priority, and a derived completion state
-- Completion is derived, never set by hand: buying the last outstanding item completes the list and stamps `completed_at`; deleting an item from a completed list reopens it; an empty list is never completed
-- Soft delete with restore: `is_active` hides a list while keeping its items, and the archived lists are listed separately
-- `should_archive(current_date, archive_delay)` is a pure predicate for a completed list older than the delay; a nightly Celery Beat entry (`archive-completed-lists-daily`, 03:00) drives the sweep, and it re-reads each candidate's items before deciding, because completion is a claim about every item
-- Wishlist: exactly one per user, enforced by a one-to-one database constraint rather than by the domain alone; items add a link, image link, description, estimated price, and `must_have`/`wanted`/`nice_to_have` priority
-- Shared tag catalogue attached to items by name, idempotent by name or slug
+- `README.md`: capabilities, architecture, API reference, deployment; update when
+  the public capabilities or API contract change.
+- ADRs live in `docs/adr/` (Status, Context, Decision, Consequences, Alternatives).
+- OpenAPI schema via drf-spectacular (`make schema`): `/api/schema/`, `/api/docs/`.
 
 ## Success Criteria for Any Change
-
 Before considering work complete:
 - [ ] `make lint` passes (Ruff, Black, mypy)
 - [ ] `make test-unit` passes
