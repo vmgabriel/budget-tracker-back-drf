@@ -7,3 +7,7 @@ class TransactionApplicationError(Exception):
 
 class InvalidTransactionInput(TransactionApplicationError):
     """Raised when a transaction command violates application policy."""
+
+
+class InvalidAccountInput(TransactionApplicationError):
+    """Raised when a funding-account command violates application policy."""

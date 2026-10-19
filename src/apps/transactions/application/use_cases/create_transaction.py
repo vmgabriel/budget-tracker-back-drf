@@ -7,10 +7,15 @@ from uuid import UUID
 
 from apps.transactions.application.dto import TransactionDetails, transaction_details
 from apps.transactions.application.exceptions import InvalidTransactionInput
-from apps.transactions.application.ports.repositories import TransactionRepository
+from apps.transactions.application.ports.repositories import (
+    AccountRepository,
+    TransactionRepository,
+)
+from apps.transactions.application.scope import require_owned_account
 from apps.transactions.domain.entities import Transaction
 from apps.transactions.domain.exceptions import FutureTransactionDate
 from apps.transactions.domain.value_objects import (
+    AccountId,
     Category,
     Money,
     TransactionDate,
@@ -29,14 +34,21 @@ class CreateTransactionCommand:
     category: str
     date: Date
     description: str | None = None
+    account_id: AccountId | None = None
 
 
 class CreateTransaction:
     """Create and persist a transaction for an authenticated user."""
 
-    def __init__(self, repository: TransactionRepository, clock: Clock) -> None:
+    def __init__(
+        self,
+        repository: TransactionRepository,
+        clock: Clock,
+        accounts: AccountRepository,
+    ) -> None:
         self._repository = repository
         self._clock = clock
+        self._accounts = accounts
 
     def execute(self, command: CreateTransactionCommand) -> TransactionDetails:
         try:
@@ -46,6 +58,9 @@ class CreateTransaction:
             transaction_date = TransactionDate(command.date)
         except (TypeError, ValueError) as error:
             raise InvalidTransactionInput(str(error)) from error
+
+        if command.account_id is not None:
+            require_owned_account(self._accounts, command.account_id, command.user_id)
 
         description = (
             command.description.strip() or None
@@ -61,6 +76,7 @@ class CreateTransaction:
                 date=transaction_date,
                 description=description,
                 now=self._clock.now(),
+                account_id=command.account_id,
             )
         except (FutureTransactionDate, TypeError, ValueError) as error:
             raise InvalidTransactionInput(str(error)) from error

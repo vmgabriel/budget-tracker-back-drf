@@ -4,8 +4,10 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from apps.transactions.domain.entities import Transaction
+from apps.transactions.domain.entities import Account, Transaction
 from apps.transactions.domain.value_objects import (
+    AccountId,
+    AccountType,
     Category,
     Money,
     TransactionDate,
@@ -66,6 +68,36 @@ class FakeTransactionRepository:
         return owned[offset : offset + limit], len(owned)
 
 
+class FakeAccountRepository:
+    """Store funding accounts in memory for application tests."""
+
+    def __init__(self) -> None:
+        self.accounts: dict[AccountId, Account] = {}
+
+    def add(self, account: Account) -> Account:
+        if account.id is None:
+            account.id = AccountId(uuid4())
+        self.accounts[account.id] = account
+        return account
+
+    def get_by_id_for_user(
+        self, account_id: AccountId, user_id: UUID
+    ) -> Account | None:
+        account = self.accounts.get(account_id)
+        if account is None or account.user_id != user_id:
+            return None
+        return account
+
+    def list_active_by_user(self, user_id: UUID) -> list[Account]:
+        active = [
+            account
+            for account in self.accounts.values()
+            if account.user_id == user_id and account.is_active
+        ]
+        active.sort(key=lambda item: (item.name, str(item.id)))
+        return active
+
+
 class FakeClock:
     """Return a configurable timezone-aware timestamp."""
 
@@ -79,6 +111,27 @@ class FakeClock:
         return self.current.date()
 
 
+def make_account(
+    *,
+    account_id: UUID | None = None,
+    user_id: UUID | None = None,
+    name: str = "Main Card",
+    account_type: AccountType = AccountType.CREDIT_CARD,
+    is_active: bool = True,
+    now: datetime = FIXED_NOW,
+) -> Account:
+    """Build a persisted funding account for use-case tests."""
+    account = Account.create(
+        user_id=user_id or uuid4(),
+        name=name,
+        account_type=account_type,
+        now=now,
+    )
+    account.id = AccountId(account_id or uuid4())
+    account.is_active = is_active
+    return account
+
+
 def make_transaction(
     *,
     transaction_id: UUID | None = None,
@@ -89,6 +142,8 @@ def make_transaction(
     transaction_date: date = date(2025, 1, 10),
     description: str | None = "Lunch",
     now: datetime = FIXED_NOW,
+    account_id: AccountId | None = None,
+    account_name: str | None = None,
 ) -> Transaction:
     """Build a persisted transaction for use-case tests."""
     transaction = Transaction.create(
@@ -99,6 +154,8 @@ def make_transaction(
         date=TransactionDate(transaction_date),
         description=description,
         now=now,
+        account_id=account_id,
     )
     transaction.id = TransactionId(transaction_id or uuid4())
+    transaction.account_name = account_name
     return transaction

@@ -84,6 +84,7 @@ def test_repository_updates_and_deletes_transaction() -> None:
         category=Category("Index fund"),
         date=TransactionDate(date(2025, 1, 14)),
         description=None,
+        account_id=None,
         now=datetime(2025, 1, 16, tzinfo=UTC),
     )
     updated = repository.update(saved)

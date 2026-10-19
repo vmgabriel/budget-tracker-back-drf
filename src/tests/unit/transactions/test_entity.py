@@ -9,6 +9,7 @@ import pytest
 from apps.transactions.domain.entities import Transaction
 from apps.transactions.domain.exceptions import FutureTransactionDate
 from apps.transactions.domain.value_objects import (
+    AccountId,
     Category,
     Money,
     TransactionDate,
@@ -43,6 +44,7 @@ def test_transaction_starts_unidentified_and_can_be_updated() -> None:
         category=Category("Index fund"),
         date=TransactionDate(date(2025, 1, 15)),
         description=None,
+        account_id=None,
         now=later,
     )
 
@@ -50,7 +52,38 @@ def test_transaction_starts_unidentified_and_can_be_updated() -> None:
     assert transaction.transaction_type is TransactionType.INVESTMENT
     assert transaction.category.value == "Index fund"
     assert transaction.description is None
+    assert transaction.account_id is None
     assert transaction.updated_at == later
+
+
+def test_transaction_update_replaces_and_clears_the_linked_account() -> None:
+    account_id = AccountId(uuid4())
+    transaction = _new_transaction()
+    transaction.assign_account(account_id=account_id, now=FIXED_NOW)
+    assert transaction.account_id == account_id
+
+    transaction.update(
+        amount=Money(Decimal("30.00")),
+        transaction_type=TransactionType.EXPENSE,
+        category=Category("Food"),
+        date=TransactionDate(date(2025, 1, 10)),
+        description="Lunch",
+        account_id=None,
+        now=FIXED_NOW,
+    )
+
+    assert transaction.account_id is None
+    assert transaction.account_name is None
+
+
+def test_transaction_assign_account_requires_an_account_identity() -> None:
+    transaction = _new_transaction()
+
+    with pytest.raises(TypeError, match="AccountId"):
+        transaction.assign_account(
+            account_id=str(uuid4()),  # type: ignore[arg-type]
+            now=FIXED_NOW,
+        )
 
 
 def test_transaction_rejects_future_dates_on_create() -> None:
@@ -77,6 +110,7 @@ def test_transaction_rejects_future_dates_on_update_without_mutation() -> None:
             category=Category("Food"),
             date=TransactionDate(date(2025, 2, 1)),
             description=None,
+            account_id=None,
             now=FIXED_NOW,
         )
 

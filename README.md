@@ -48,6 +48,8 @@ each introduced as a new bounded context inside this monolith.
 - Password hashing and Django's standard password validators.
 - Owner-only transaction CRUD with pagination and date validation.
 - Transaction types: `income`, `expense`, `investment`, and `savings`.
+- Owner-scoped funding accounts (`credit_card`, `debit`, `cash`, `savings`) that
+  transactions can be linked to, so spending can be grouped per funding source.
 - Dashboard totals for income and expenses; investment and savings records are
   retained but are not counted as income or expense.
 - Daily, ISO-week (Monday–Sunday), and calendar-month summaries.
@@ -475,6 +477,9 @@ be no larger than `9999999999.99`. Dates cannot be in the future.
 | `GET` | `/api/v1/transactions/{id}/` | Retrieve an owned transaction |
 | `PATCH` | `/api/v1/transactions/{id}/` | Partially update an owned transaction |
 | `DELETE` | `/api/v1/transactions/{id}/` | Delete an owned transaction |
+| `GET` | `/api/v1/transactions/accounts/` | List the current user's active funding accounts |
+| `POST` | `/api/v1/transactions/accounts/` | Create a funding account |
+| `GET` | `/api/v1/transactions/accounts/{id}/` | Retrieve an owned funding account |
 
 ### Create
 
@@ -495,6 +500,8 @@ Response (`201 Created`):
   "category": "Food",
   "date": "2026-01-15",
   "description": "Lunch",
+  "account_id": null,
+  "account_name": null,
   "created_at": "2026-01-15T12:00:00Z",
   "updated_at": "2026-01-15T12:00:00Z"
 }
@@ -503,7 +510,50 @@ Response (`201 Created`):
 `transaction_type` accepts `income`, `expense`, `investment`, or `savings`.
 `description` is optional and is returned as `null` when blank. A partial
 update may contain any subset of `amount`, `transaction_type`, `category`,
-`date`, and `description`; an empty patch is rejected.
+`date`, `description`, and `account_id`; an empty patch is rejected.
+
+### Funding accounts
+
+Create an account before linking transactions to it:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/transactions/accounts/ \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access-token>' \
+  -d '{"name":"Main Card","account_type":"credit_card"}'
+```
+
+```json
+{
+  "id": "2f0f6f2c-6a41-4f4c-9a30-3b9a85d4a111",
+  "name": "Main Card",
+  "account_type": "credit_card",
+  "is_active": true,
+  "created_at": "2026-01-15T12:00:00Z",
+  "updated_at": "2026-01-15T12:00:00Z"
+}
+```
+
+`account_type` accepts `credit_card`, `debit`, `cash`, or `savings`. New
+accounts are always active, and `GET /api/v1/transactions/accounts/` returns the
+active ones only.
+
+Send `account_id` when creating or patching a transaction to link it:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/transactions/ \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access-token>' \
+  -d '{"amount":"42.50","transaction_type":"expense","category":"Food","date":"2026-01-15","account_id":"2f0f6f2c-6a41-4f4c-9a30-3b9a85d4a111"}'
+```
+
+Transactions expose the funding source as two flat read-only fields,
+`account_id` and `account_name`, which keeps per-account charting simple for
+clients. Both are `null` for unlinked transactions. An `account_id` that
+belongs to another user (or does not exist) is reported as `404`, and sending
+`null` in a patch is rejected: this phase links and re-links accounts, it does
+not detach them. Deleting an account keeps its transactions and clears the
+link (`SET_NULL`).
 
 ## Dashboard
 

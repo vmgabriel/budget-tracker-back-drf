@@ -1,10 +1,28 @@
 # Project Context (Current State)
 
 ## Active Focus
-- Current Module: `purchases` (Backend complete, Frontend BFF integration in progress)
-- Current Phase: Production Readiness (Phase 3: Observability, CI/CD, Backups) — **complete**, pending developer review.
+- Current Module: `transactions` — Phase 1 (funding accounts) implemented,
+  pending developer review.
+- Current Phase: Finance upgrade, step 1 of N. Phase 3 of the previous
+  (Production Readiness) track is complete and reviewed.
 
 ## Recent Architectural Decisions
+- Funding sources live inside the `transactions` bounded context as their own
+  `Account` aggregate rather than a new module: the relationship is
+  transaction-centric and splitting it would force cross-context joins for
+  every spending read.
+- `Transaction` owns an optional `account_id` (`SET_NULL`, nullable) so every
+  pre-existing transaction stays valid and no backfill is required.
+- Transactions expose a flat `account_id` + `account_name` pair instead of a
+  nested object. `account_name` is read-model metadata hydrated by the ORM
+  adapter (`select_related("account")`), never persisted and never written by
+  the domain.
+- Per-account writing is link/re-link only. `PATCH` accepts `account_id` but
+  rejects `null`, so an account is never silently detached; unlinking is out of
+  scope until a later phase asks for it.
+- Aggregations deliberately stay out of this phase; the dashboard context is
+  untouched and still reads persisted summaries only.
+
 - Single `config/settings.py` with `DJANGO_ENVIRONMENT` opt-in (no base/prod split).
 - `connect_timeout=5` applied ONLY in production settings (causes test flakiness in Docker).
 - Rate limiting applied to auth endpoints (`LoginRateThrottle`, `RegisterRateThrottle`).
@@ -27,6 +45,25 @@
   jobs: `lint` (`make lint`), `test` (`make test`), and `production`
   (`make schema` + `make check-deploy` against a production-shaped `.env`).
 
+## Transactions Phase 1: Accounts & Funding Sources (implemented, pending review)
+- Domain: `Account` entity (`id`, `user_id`, `name`, `account_type`,
+  `is_active`, timestamps), `AccountId` / `AccountType` value objects,
+  `AccountNotFound` / `InvalidAccountType` errors, and
+  `Transaction.account_id` (+ `assign_account`).
+- Application: `AccountRepository` port, `CreateAccount`,
+  `ListUserAccounts`, `GetAccount`, `UpdateTransactionAccount`, and account
+  validation inside `CreateTransaction` / `UpdateTransaction`, all resolving
+  ownership through `application/scope.py` (foreign accounts surface as 404).
+- Infrastructure: `Account` model (UUID PK, owner FK, per-owner active index,
+  type/name check constraints), `Transaction.account` FK, and
+  `DjangoAccountRepository`.
+- Interfaces: `GET|POST /api/v1/transactions/accounts/`,
+  `GET /api/v1/transactions/accounts/{id}/`, plus `account_id` /
+  `account_name` on every transaction representation.
+- Migration: `0003_transaction_funding_accounts.py`.
+- Not included on purpose: account rename/deactivate endpoints, pagination for
+  accounts, unlinking a transaction, and per-account dashboard rollups.
+
 ## Phase 3 Deliverables (done)
 - Structured JSON logging and request-id correlation, with unit tests for the
   formatter/middleware and integration tests over real HTTP.
@@ -48,7 +85,8 @@
 
 ## Module Map (High Level)
 - `users`, `profile`: Identity & localization.
-- `transactions`, `dashboard`: Finance & pre-computed summaries.
+- `transactions`, `dashboard`: Finance & pre-computed summaries. Funding
+  accounts (`Account`) are part of `transactions`.
 - `rentals`: Properties, documents, utilities, payments.
 - `tasks`: Goals, daily plans, local LLM (Ollama) async evaluation.
 - `purchases`: Shopping lists, wishlist, tags, soft-delete archival.

@@ -7,12 +7,17 @@ from uuid import UUID
 
 from apps.transactions.application.dto import TransactionDetails, transaction_details
 from apps.transactions.application.exceptions import InvalidTransactionInput
-from apps.transactions.application.ports.repositories import TransactionRepository
+from apps.transactions.application.ports.repositories import (
+    AccountRepository,
+    TransactionRepository,
+)
+from apps.transactions.application.scope import require_owned_account
 from apps.transactions.domain.exceptions import (
     FutureTransactionDate,
     TransactionNotFound,
 )
 from apps.transactions.domain.value_objects import (
+    AccountId,
     Category,
     Money,
     TransactionDate,
@@ -37,14 +42,21 @@ class UpdateTransactionCommand:
     category: str | None = None
     date: Date | None = None
     description: str | None = None
+    account_id: AccountId | None = None
 
 
 class UpdateTransaction:
     """Apply partial changes to a transaction owned by the requesting user."""
 
-    def __init__(self, repository: TransactionRepository, clock: Clock) -> None:
+    def __init__(
+        self,
+        repository: TransactionRepository,
+        clock: Clock,
+        accounts: AccountRepository,
+    ) -> None:
         self._repository = repository
         self._clock = clock
+        self._accounts = accounts
 
     def execute(self, command: UpdateTransactionCommand) -> TransactionDetails:
         if (
@@ -53,6 +65,7 @@ class UpdateTransaction:
             and command.category is None
             and command.date is None
             and command.description is None
+            and command.account_id is None
         ):
             raise InvalidTransactionInput("At least one transaction field is required.")
 
@@ -86,6 +99,9 @@ class UpdateTransaction:
         except (TypeError, ValueError) as error:
             raise InvalidTransactionInput(str(error)) from error
 
+        if command.account_id is not None:
+            require_owned_account(self._accounts, command.account_id, command.user_id)
+
         description = (
             command.description.strip() or None
             if command.description is not None
@@ -98,6 +114,11 @@ class UpdateTransaction:
                 category=category,
                 date=transaction_date,
                 description=description,
+                account_id=(
+                    command.account_id
+                    if command.account_id is not None
+                    else transaction.account_id
+                ),
                 now=self._clock.now(),
             )
         except (FutureTransactionDate, TypeError, ValueError) as error:

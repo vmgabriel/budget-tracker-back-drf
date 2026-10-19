@@ -40,8 +40,11 @@ from apps.tasks.infrastructure.persistence.models import (
     GoalModel,
     TaskModel,
 )
-from apps.transactions.domain.value_objects import TransactionType
-from apps.transactions.infrastructure.persistence.models import Transaction
+from apps.transactions.domain.value_objects import AccountType, TransactionType
+from apps.transactions.infrastructure.persistence.models import (
+    Account,
+    Transaction,
+)
 
 User = get_user_model()
 
@@ -83,6 +86,18 @@ class UserFactory(factory.django.DjangoModelFactory):
             user.save(update_fields=("password",))  # type: ignore[attr-defined]
 
 
+class AccountFactory(factory.django.DjangoModelFactory):
+    """Create persisted funding accounts for infrastructure and API tests."""
+
+    class Meta:
+        model = Account
+
+    user = factory.SubFactory(UserFactory)
+    name = factory.Sequence(lambda number: f"Account {number}")
+    account_type = AccountType.CASH.value
+    is_active = True
+
+
 class TransactionFactory(factory.django.DjangoModelFactory):
     """Create persisted transactions for infrastructure and API tests."""
 
@@ -90,6 +105,7 @@ class TransactionFactory(factory.django.DjangoModelFactory):
         model = Transaction
 
     user = factory.SubFactory(UserFactory)
+    account = None
     amount = Decimal("25.00")
     transaction_type = TransactionType.EXPENSE.value
     category = factory.Sequence(lambda number: f"Category {number}")

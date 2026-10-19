@@ -32,6 +32,28 @@ TRANSACTION_CHOICES: tuple[tuple[str, str], ...] = (
 )
 
 
+class AccountType(StrEnum):
+    """Kinds of funding sources a transaction can be paid from."""
+
+    CREDIT_CARD = "credit_card"
+    DEBIT = "debit"
+    CASH = "cash"
+    SAVINGS = "savings"
+
+    @property
+    def label(self) -> str:
+        """Return the human-readable type label."""
+        return self.value.replace("_", " ").capitalize()
+
+
+ACCOUNT_TYPE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("credit_card", "Credit card"),
+    ("debit", "Debit"),
+    ("cash", "Cash"),
+    ("savings", "Savings"),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TransactionId:
     """Identity of a persisted transaction."""
@@ -41,6 +63,20 @@ class TransactionId:
     def __post_init__(self) -> None:
         if not isinstance(self.value, UUID):
             raise TypeError("TransactionId must contain a UUID.")
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True, slots=True)
+class AccountId:
+    """Identity of a persisted funding account."""
+
+    value: UUID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, UUID):
+            raise TypeError("AccountId must contain a UUID.")
 
     def __str__(self) -> str:
         return str(self.value)

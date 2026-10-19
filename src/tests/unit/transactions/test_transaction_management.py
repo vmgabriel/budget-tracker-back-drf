@@ -14,8 +14,9 @@ from apps.transactions.application.use_cases import (
     UpdateTransaction,
     UpdateTransactionCommand,
 )
-from apps.transactions.domain.exceptions import TransactionNotFound
+from apps.transactions.domain.exceptions import AccountNotFound, TransactionNotFound
 from apps.transactions.domain.value_objects import (
+    AccountId,
     Category,
     Money,
     TransactionDate,
@@ -23,9 +24,28 @@ from apps.transactions.domain.value_objects import (
     TransactionType,
 )
 
-from .fakes import FIXED_NOW, FakeClock, FakeTransactionRepository, make_transaction
+from .fakes import (
+    FIXED_NOW,
+    FakeAccountRepository,
+    FakeClock,
+    FakeTransactionRepository,
+    make_account,
+    make_transaction,
+)
 
 pytestmark = pytest.mark.unit
+
+
+def _update_use_case(
+    repository: FakeTransactionRepository,
+    clock: FakeClock | None = None,
+    accounts: FakeAccountRepository | None = None,
+) -> UpdateTransaction:
+    return UpdateTransaction(
+        repository,
+        clock or FakeClock(),
+        accounts or FakeAccountRepository(),
+    )
 
 
 def test_get_transaction_enforces_owner_scope() -> None:
@@ -53,7 +73,7 @@ def test_update_transaction_applies_partial_changes() -> None:
     clock_time = FIXED_NOW.replace(day=16)
     clock = FakeClock(now=clock_time)
 
-    result = UpdateTransaction(repository, clock).execute(
+    result = _update_use_case(repository, clock).execute(
         UpdateTransactionCommand(
             transaction_id=transaction_id,
             user_id=owner_id,
@@ -71,6 +91,61 @@ def test_update_transaction_applies_partial_changes() -> None:
     assert result.updated_at == clock_time
 
 
+def test_update_transaction_links_an_owned_account_and_keeps_it_on_other_edits() -> (
+    None
+):
+    owner_id = uuid4()
+    account_id = AccountId(uuid4())
+    accounts = FakeAccountRepository()
+    accounts.add(make_account(account_id=account_id.value, user_id=owner_id))
+    transaction = make_transaction(user_id=owner_id)
+    repository = FakeTransactionRepository()
+    repository.add(transaction)
+    transaction_id = transaction.id
+    assert transaction_id is not None
+
+    linked = _update_use_case(repository, accounts=accounts).execute(
+        UpdateTransactionCommand(
+            transaction_id=transaction_id,
+            user_id=owner_id,
+            account_id=account_id,
+        )
+    )
+
+    assert linked.account_id == account_id
+
+    untouched = _update_use_case(repository, accounts=accounts).execute(
+        UpdateTransactionCommand(
+            transaction_id=transaction_id,
+            user_id=owner_id,
+            amount=Decimal("70.00"),
+        )
+    )
+
+    assert untouched.account_id == account_id
+
+
+def test_update_transaction_rejects_a_foreign_or_unknown_account() -> None:
+    owner_id = uuid4()
+    account_id = AccountId(uuid4())
+    accounts = FakeAccountRepository()
+    accounts.add(make_account(account_id=account_id.value))
+    transaction = make_transaction(user_id=owner_id)
+    repository = FakeTransactionRepository()
+    repository.add(transaction)
+    transaction_id = transaction.id
+    assert transaction_id is not None
+
+    with pytest.raises(AccountNotFound):
+        _update_use_case(repository, accounts=accounts).execute(
+            UpdateTransactionCommand(
+                transaction_id=transaction_id,
+                user_id=owner_id,
+                account_id=account_id,
+            )
+        )
+
+
 @pytest.mark.parametrize("amount", [Decimal("1.001"), Decimal("10000000000.00")])
 def test_update_transaction_rejects_amounts_outside_storage_precision(
     amount: Decimal,
@@ -83,7 +158,7 @@ def test_update_transaction_rejects_amounts_outside_storage_precision(
     assert transaction_id is not None
 
     with pytest.raises(InvalidTransactionInput):
-        UpdateTransaction(repository, FakeClock()).execute(
+        _update_use_case(repository).execute(
             UpdateTransactionCommand(
                 transaction_id=transaction_id,
                 user_id=owner_id,
@@ -104,7 +179,7 @@ def test_update_transaction_rejects_future_date_and_preserves_state() -> None:
     original_category = transaction.category
 
     with pytest.raises(InvalidTransactionInput, match="future"):
-        UpdateTransaction(repository, FakeClock()).execute(
+        _update_use_case(repository).execute(
             UpdateTransactionCommand(
                 transaction_id=transaction_id,
                 user_id=owner_id,
@@ -123,7 +198,7 @@ def test_update_transaction_requires_a_field() -> None:
     assert transaction_id is not None
 
     with pytest.raises(InvalidTransactionInput, match="At least one"):
-        UpdateTransaction(repository, FakeClock()).execute(
+        _update_use_case(repository).execute(
             UpdateTransactionCommand(
                 transaction_id=transaction_id,
                 user_id=transaction.user_id,
@@ -139,7 +214,7 @@ def test_update_transaction_hides_other_owners_records() -> None:
     assert transaction_id is not None
 
     with pytest.raises(TransactionNotFound):
-        UpdateTransaction(repository, FakeClock()).execute(
+        _update_use_case(repository).execute(
             UpdateTransactionCommand(
                 transaction_id=transaction_id,
                 user_id=uuid4(),
