@@ -1,8 +1,10 @@
 """Persistence ports for transaction and funding-account aggregates."""
 
+from datetime import date
 from typing import Protocol
 from uuid import UUID
 
+from apps.transactions.application.analytics import AnalyticsAggregate
 from apps.transactions.domain.entities import Account, Transaction
 from apps.transactions.domain.value_objects import AccountId, TransactionId
 
@@ -32,6 +34,23 @@ class TransactionRepository(Protocol):
         self, user_id: UUID, *, offset: int, limit: int
     ) -> tuple[list[Transaction], int]:
         """Return one page of transactions and the owner's total count."""
+        raise NotImplementedError()
+
+    def get_analytics_aggregates(
+        self,
+        user_id: UUID,
+        *,
+        start_date: date,
+        end_date: date,
+        group_by: str,
+        period: str,
+    ) -> list[AnalyticsAggregate]:
+        """Aggregate one bounded date range into chart rows.
+
+        ``group_by="type"`` returns one ``TypeBucketTotals`` per ``period``
+        bucket; ``group_by="category"`` returns one ``CategoryTotal`` per
+        expense category. Callers are responsible for validating the range.
+        """
         raise NotImplementedError()
 
 

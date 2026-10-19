@@ -2,8 +2,11 @@
 
 from apps.transactions.application.dto import (
     AccountDetails,
+    CategoryChartRow,
+    TransactionAnalytics,
     TransactionDetails,
     TransactionPage,
+    TypeChartRow,
 )
 from apps.transactions.application.exceptions import (
     InvalidAccountInput,
@@ -15,6 +18,7 @@ from apps.transactions.application.ports import (
     TransactionRepository,
 )
 from apps.transactions.application.use_cases import (
+    AnalyticsCommand,
     CreateAccount,
     CreateAccountCommand,
     CreateTransaction,
@@ -22,6 +26,7 @@ from apps.transactions.application.use_cases import (
     DeleteTransaction,
     GetAccount,
     GetTransaction,
+    GetTransactionAnalytics,
     ListUserAccounts,
     ListUserTransactions,
     UpdateTransaction,
@@ -33,6 +38,8 @@ from apps.transactions.application.use_cases import (
 __all__ = (
     "AccountDetails",
     "AccountRepository",
+    "AnalyticsCommand",
+    "CategoryChartRow",
     "Clock",
     "CreateAccount",
     "CreateAccountCommand",
@@ -41,13 +48,16 @@ __all__ = (
     "DeleteTransaction",
     "GetAccount",
     "GetTransaction",
+    "GetTransactionAnalytics",
     "InvalidAccountInput",
     "InvalidTransactionInput",
     "ListUserAccounts",
     "ListUserTransactions",
+    "TransactionAnalytics",
     "TransactionDetails",
     "TransactionPage",
     "TransactionRepository",
+    "TypeChartRow",
     "UpdateTransaction",
     "UpdateTransactionAccount",
     "UpdateTransactionAccountCommand",

@@ -1,10 +1,11 @@
 # Project Context (Current State)
 
 ## Active Focus
-- Current Module: `transactions` — Phase 1 (funding accounts) implemented,
+- Current Module: `transactions` — Phase 2 (analytics endpoints) implemented,
   pending developer review.
-- Current Phase: Finance upgrade, step 1 of N. Phase 3 of the previous
-  (Production Readiness) track is complete and reviewed.
+- Current Phase: Finance upgrade, step 2 of N. Phase 1 (funding accounts) is
+  committed. Phase 3 of the previous (Production Readiness) track is complete
+  and reviewed.
 
 ## Recent Architectural Decisions
 - Funding sources live inside the `transactions` bounded context as their own
@@ -20,8 +21,23 @@
 - Per-account writing is link/re-link only. `PATCH` accepts `account_id` but
   rejects `null`, so an account is never silently detached; unlinking is out of
   scope until a later phase asks for it.
-- Aggregations deliberately stay out of this phase; the dashboard context is
+- Phase 1 deliberately deferred aggregation. Phase 2 adds exactly one bounded
+  read path (at most 366 days) inside `transactions`; the dashboard context is
   untouched and still reads persisted summaries only.
+- Analytics are computed on demand, not pre-computed: no Celery task, no
+  rollup table. The bound plus the existing `(owner, date)` index keeps the
+  scan predictable, and the dashboard's pre-computed track stays the only
+  "never aggregate on read" surface.
+- The analytics response has two flat shapes rather than one nested envelope:
+  `group_by=type` returns one row per period with all four series (zero-filled);
+  `group_by=category` returns expense-only totals, largest slice first. String
+  decimals keep charts free of binary-float rounding.
+- The adapter only truncates and sums; period labels (`YYYY-MM-DD`, ISO
+  `YYYY-Www`, `YYYY-MM`) are built in the application layer, where they are
+  unit-testable without a database.
+- Analytics vocabulary (`group_by` / `period` strings, the 366-day bound) lives
+  in `application/analytics.py` so the use case, ORM adapter, and serializers
+  cannot drift.
 
 - Single `config/settings.py` with `DJANGO_ENVIRONMENT` opt-in (no base/prod split).
 - `connect_timeout=5` applied ONLY in production settings (causes test flakiness in Docker).
@@ -45,7 +61,7 @@
   jobs: `lint` (`make lint`), `test` (`make test`), and `production`
   (`make schema` + `make check-deploy` against a production-shaped `.env`).
 
-## Transactions Phase 1: Accounts & Funding Sources (implemented, pending review)
+## Transactions Phase 1: Accounts & Funding Sources (done)
 - Domain: `Account` entity (`id`, `user_id`, `name`, `account_type`,
   `is_active`, timestamps), `AccountId` / `AccountType` value objects,
   `AccountNotFound` / `InvalidAccountType` errors, and
@@ -63,6 +79,31 @@
 - Migration: `0003_transaction_funding_accounts.py`.
 - Not included on purpose: account rename/deactivate endpoints, pagination for
   accounts, unlinking a transaction, and per-account dashboard rollups.
+
+## Transactions Phase 2: Analytics for BFF Charts (implemented, pending review)
+- Application: `GetTransactionAnalytics` + `AnalyticsCommand`. It validates the
+  range (reversed or > 366 days rejected), the `group_by`/`period` vocabulary,
+  and formats rows with two-decimal strings and zero-filled series.
+  `application/analytics.py` holds the shared vocabulary plus the adapter read
+  models (`TypeBucketTotals`, `CategoryTotal`).
+- Domain: unchanged. Analytics is a read concern, so no entity or value object
+  was added and the domain still knows nothing about charts, periods, or the
+  366-day bound.
+- Infrastructure: `TransactionRepository.get_analytics_aggregates` implemented
+  with one `values().annotate(Sum(..., filter=...))` pass per shape, using
+  `TruncDay`/`TruncWeek`/`TruncMonth` for buckets. Owner + date filters reuse
+  `transaction_owner_date_idx`; no migration or new index was needed.
+- Interfaces: `GET /api/v1/transactions/analytics/` with `start_date`,
+  `end_date`, `group_by` (`type` | `category`), and optional `period`
+  (`daily` | `weekly` | `monthly`, default `monthly`).
+- Tests: 14 unit cases (validation short-circuits, label formats incl. ISO year
+  rollover, zero-fill, decimal formatting) and 19 integration cases across the
+  ORM adapter and HTTP (exact flat payloads, owner scoping, 400/401 paths,
+  schema mounting).
+- Not included on purpose: zero-filling periods with no transactions,
+  per-category type breakdowns, per-account analytics dimensions, custom
+  category ordering, and CSV export. Category analytics counts expenses only,
+  matching the pie chart it feeds.
 
 ## Phase 3 Deliverables (done)
 - Structured JSON logging and request-id correlation, with unit tests for the
@@ -85,8 +126,9 @@
 
 ## Module Map (High Level)
 - `users`, `profile`: Identity & localization.
-- `transactions`, `dashboard`: Finance & pre-computed summaries. Funding
-  accounts (`Account`) are part of `transactions`.
+- `transactions`, `dashboard`: Finance, bounded on-demand analytics, and
+  pre-computed summaries. Funding accounts (`Account`) are part of
+  `transactions`.
 - `rentals`: Properties, documents, utilities, payments.
 - `tasks`: Goals, daily plans, local LLM (Ollama) async evaluation.
 - `purchases`: Shopping lists, wishlist, tags, soft-delete archival.

@@ -1,9 +1,23 @@
 """Django ORM implementations of the transaction-context repository ports."""
 
+from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from django.db import transaction as db_transaction
+from django.db.models import DecimalField, Q, QuerySet, Sum, Value
+from django.db.models.functions import Coalesce, TruncDay, TruncMonth, TruncWeek
 
+from apps.transactions.application.analytics import (
+    GROUP_BY_CATEGORY,
+    PERIOD_DAILY,
+    PERIOD_MONTHLY,
+    PERIOD_WEEKLY,
+    TRANSACTION_TYPE_ORDER,
+    AnalyticsAggregate,
+    CategoryTotal,
+    TypeBucketTotals,
+)
 from apps.transactions.application.ports.repositories import (
     AccountRepository,
     TransactionRepository,
@@ -145,6 +159,85 @@ class DjangoTransactionRepository(TransactionRepository):
         )
         return [self._to_domain(model) for model in models], total
 
+    def get_analytics_aggregates(
+        self,
+        user_id: UUID,
+        *,
+        start_date: date,
+        end_date: date,
+        group_by: str,
+        period: str,
+    ) -> list[AnalyticsAggregate]:
+        """Aggregate one bounded, owner-scoped range into chart rows.
+
+        Both branches filter on ``user`` and ``date`` so PostgreSQL can use
+        ``transaction_owner_date_idx``; the type grouping computes the four
+        series in a single pass with conditional sums.
+        """
+        queryset = TransactionModel.objects.filter(
+            user_id=user_id,
+            date__gte=start_date,
+            date__lte=end_date,
+        )
+        if group_by == GROUP_BY_CATEGORY:
+            return self._category_aggregates(queryset)
+        return self._type_aggregates(queryset, period)
+
+    @staticmethod
+    def _category_aggregates(
+        queryset: QuerySet[TransactionModel],
+    ) -> list[AnalyticsAggregate]:
+        """Return one total per expense category, largest slice first."""
+        rows = (
+            queryset.filter(transaction_type=TransactionType.EXPENSE.value)
+            .values("category")
+            .annotate(total=Sum("amount"))
+            .order_by("-total", "category")
+        )
+        return [
+            CategoryTotal(category=row["category"], total=row["total"]) for row in rows
+        ]
+
+    @staticmethod
+    def _type_aggregates(
+        queryset: QuerySet[TransactionModel], period: str
+    ) -> list[AnalyticsAggregate]:
+        """Return one row per truncated period with the four type totals."""
+        trunc = {
+            PERIOD_DAILY: TruncDay,
+            PERIOD_WEEKLY: TruncWeek,
+            PERIOD_MONTHLY: TruncMonth,
+        }[period]
+        amount_field: DecimalField = DecimalField(max_digits=18, decimal_places=2)
+        rows = (
+            queryset.annotate(bucket=trunc("date"))
+            .values("bucket")
+            .annotate(
+                **{
+                    transaction_type.value: Coalesce(
+                        Sum(
+                            "amount",
+                            filter=Q(transaction_type=transaction_type.value),
+                        ),
+                        Value(Decimal("0.00")),
+                        output_field=amount_field,
+                    )
+                    for transaction_type in TRANSACTION_TYPE_ORDER
+                }
+            )
+            .order_by("bucket")
+        )
+        return [
+            TypeBucketTotals(
+                bucket=_bucket_date(row["bucket"]),
+                totals={
+                    transaction_type: row[transaction_type.value]
+                    for transaction_type in TRANSACTION_TYPE_ORDER
+                },
+            )
+            for row in rows
+        ]
+
     @staticmethod
     def _to_model(transaction: Transaction) -> TransactionModel:
         return TransactionModel(
@@ -191,3 +284,8 @@ class DjangoTransactionRepository(TransactionRepository):
             ),
             account_name=account_name,
         )
+
+
+def _bucket_date(value: date | datetime) -> date:
+    """Normalize a truncated annotation, which may arrive as a datetime."""
+    return value.date() if isinstance(value, datetime) else value

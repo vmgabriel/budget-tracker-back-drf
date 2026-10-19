@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from apps.transactions.application.analytics import AnalyticsAggregate
 from apps.transactions.domain.entities import Account, Transaction
 from apps.transactions.domain.value_objects import (
     AccountId,
@@ -21,8 +22,10 @@ FIXED_NOW = datetime(2025, 1, 15, 12, tzinfo=UTC)
 class FakeTransactionRepository:
     """Store transaction aggregates in memory for application tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, analytics: list[AnalyticsAggregate] | None = None) -> None:
         self.transactions: dict[TransactionId, Transaction] = {}
+        self.analytics = list(analytics or [])
+        self.analytics_calls: list[dict[str, object]] = []
 
     def add(self, transaction: Transaction) -> Transaction:
         if transaction.id is None:
@@ -66,6 +69,26 @@ class FakeTransactionRepository:
             reverse=True,
         )
         return owned[offset : offset + limit], len(owned)
+
+    def get_analytics_aggregates(
+        self,
+        user_id: UUID,
+        *,
+        start_date: date,
+        end_date: date,
+        group_by: str,
+        period: str,
+    ) -> list[AnalyticsAggregate]:
+        self.analytics_calls.append(
+            {
+                "user_id": user_id,
+                "start_date": start_date,
+                "end_date": end_date,
+                "group_by": group_by,
+                "period": period,
+            }
+        )
+        return list(self.analytics)
 
 
 class FakeAccountRepository:

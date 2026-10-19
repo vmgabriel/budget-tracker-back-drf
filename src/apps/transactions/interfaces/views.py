@@ -18,6 +18,7 @@ from apps.transactions.application.exceptions import (
     InvalidTransactionInput,
 )
 from apps.transactions.application.use_cases import (
+    AnalyticsCommand,
     CreateAccountCommand,
     CreateTransactionCommand,
     UpdateTransactionCommand,
@@ -40,8 +41,10 @@ from apps.transactions.interfaces.dependencies import (
 from apps.transactions.interfaces.serializers import (
     AccountListSerializer,
     AccountSerializer,
+    AnalyticsQuerySerializer,
     CreateAccountSerializer,
     CreateTransactionSerializer,
+    TransactionAnalyticsSerializer,
     TransactionPageSerializer,
     TransactionSerializer,
     UpdateTransactionSerializer,
@@ -295,6 +298,39 @@ class TransactionDetailView(APIView):
         except TransactionNotFound as error:
             raise _translate_transaction_error(error) from error
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TransactionAnalyticsView(APIView):
+    """Return bounded, chart-ready aggregates for the authenticated user."""
+
+    permission_classes = (IsAuthenticated, IsNotBanned)
+    authentication_classes = (JWTAuthentication,)
+
+    @extend_schema(
+        operation_id="transactions_analytics",
+        parameters=[AnalyticsQuerySerializer],
+        responses={
+            status.HTTP_200_OK: TransactionAnalyticsSerializer,
+            **ERROR_RESPONSES,
+        },
+    )
+    def get(self, request: Request) -> Response:
+        query = AnalyticsQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        data = query.validated_data
+        try:
+            analytics = build_transaction_use_cases().analytics.execute(
+                AnalyticsCommand(
+                    user_id=_authenticated_user_id(request),
+                    start_date=data["start_date"],
+                    end_date=data["end_date"],
+                    group_by=str(data["group_by"]),
+                    period=str(data["period"]),
+                )
+            )
+        except InvalidTransactionInput as error:
+            raise _translate_transaction_error(error) from error
+        return Response(TransactionAnalyticsSerializer(analytics).data)
 
 
 # Compatibility names for clients that refer to the HTTP controllers directly.

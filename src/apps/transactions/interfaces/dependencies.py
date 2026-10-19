@@ -8,6 +8,7 @@ from apps.transactions.application.use_cases import (
     DeleteTransaction,
     GetAccount,
     GetTransaction,
+    GetTransactionAnalytics,
     ListUserAccounts,
     ListUserTransactions,
     UpdateTransaction,
@@ -30,6 +31,7 @@ class TransactionUseCases:
     update: UpdateTransaction
     delete: DeleteTransaction
     update_account: UpdateTransactionAccount
+    analytics: GetTransactionAnalytics
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,7 @@ def build_transaction_use_cases() -> TransactionUseCases:
         update=UpdateTransaction(repository, clock, accounts),
         delete=DeleteTransaction(repository),
         update_account=UpdateTransactionAccount(repository, accounts, clock),
+        analytics=GetTransactionAnalytics(repository),
     )
 
 

@@ -5,6 +5,7 @@ from django.urls import path
 from apps.transactions.interfaces.views import (
     AccountDetailView,
     AccountListCreateView,
+    TransactionAnalyticsView,
     TransactionDetailView,
     TransactionListCreateView,
 )
@@ -16,6 +17,11 @@ urlpatterns = [
         "",
         TransactionListCreateView.as_view(),
         name="list",
+    ),
+    path(
+        "analytics/",
+        TransactionAnalyticsView.as_view(),
+        name="analytics",
     ),
     path(
         "accounts/",

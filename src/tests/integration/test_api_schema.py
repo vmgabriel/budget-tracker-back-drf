@@ -18,6 +18,7 @@ def test_openapi_schema_is_served() -> None:
     assert "/api/v1/transactions/" in schema["paths"]
     assert "/api/v1/transactions/accounts/" in schema["paths"]
     assert "/api/v1/transactions/accounts/{account_id}/" in schema["paths"]
+    assert "/api/v1/transactions/analytics/" in schema["paths"]
     assert "/api/v1/dashboard/overview/" in schema["paths"]
     assert "/api/v1/tasks/tasks/" in schema["paths"]
     assert "/api/v1/tasks/tasks/{id}/mark-done/" in schema["paths"]

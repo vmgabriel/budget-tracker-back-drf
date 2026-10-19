@@ -50,6 +50,38 @@ class TransactionPage:
     total: int
 
 
+@dataclass(frozen=True, slots=True)
+class TypeChartRow:
+    """One period of the Income/Expense/Investment/Savings chart.
+
+    Amounts are strings with two decimals so browsers never round binary
+    floats on the way to a chart.
+    """
+
+    label: str
+    income: str
+    expense: str
+    investment: str
+    savings: str
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryChartRow:
+    """One slice of the expense-by-category chart."""
+
+    label: str
+    total: str
+
+
+@dataclass(frozen=True, slots=True)
+class TransactionAnalytics:
+    """A bounded, chart-ready aggregation result."""
+
+    period: str
+    group_by: str
+    data: tuple[TypeChartRow | CategoryChartRow, ...]
+
+
 def account_details(account: Account) -> AccountDetails:
     """Convert a persisted account aggregate into a safe result."""
     if account.id is None:

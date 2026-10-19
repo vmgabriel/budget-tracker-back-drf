@@ -4,6 +4,12 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
+from apps.transactions.application.analytics import (
+    DEFAULT_PERIOD,
+    GROUP_BY_CHOICES,
+    MAX_RANGE_DAYS,
+    PERIOD_CHOICES,
+)
 from apps.transactions.domain.value_objects import (
     ACCOUNT_TYPE_CHOICES,
     TRANSACTION_CHOICES,
@@ -132,3 +138,53 @@ class AccountListSerializer(serializers.Serializer):
 
     count = serializers.IntegerField(read_only=True)
     results = AccountSerializer(many=True, read_only=True)
+
+
+class AnalyticsQuerySerializer(serializers.Serializer):
+    """Validate one bounded analytics request."""
+
+    start_date = serializers.DateField(
+        help_text="Inclusive range start as YYYY-MM-DD.",
+    )
+    end_date = serializers.DateField(
+        help_text=(
+            "Inclusive range end as YYYY-MM-DD; at most "
+            f"{MAX_RANGE_DAYS} days after start_date."
+        ),
+    )
+    group_by = serializers.ChoiceField(
+        choices=GROUP_BY_CHOICES,
+        help_text=(
+            "type returns one row per period; category returns one row per "
+            "expense category."
+        ),
+    )
+    period = serializers.ChoiceField(
+        choices=PERIOD_CHOICES,
+        required=False,
+        default=DEFAULT_PERIOD,
+        help_text="Granularity used when group_by is type; defaults to monthly.",
+    )
+
+
+class AnalyticsRowSerializer(serializers.Serializer):
+    """Represent one flat chart row.
+
+    Type rows carry the four amounts; category rows carry ``total``. Fields
+    that do not apply to a row are omitted from the payload.
+    """
+
+    label = serializers.CharField(read_only=True)
+    income = serializers.CharField(read_only=True)
+    expense = serializers.CharField(read_only=True)
+    investment = serializers.CharField(read_only=True)
+    savings = serializers.CharField(read_only=True)
+    total = serializers.CharField(read_only=True)
+
+
+class TransactionAnalyticsSerializer(serializers.Serializer):
+    """Represent a bounded, chart-ready aggregation result."""
+
+    period = serializers.ChoiceField(choices=PERIOD_CHOICES, read_only=True)
+    group_by = serializers.ChoiceField(choices=GROUP_BY_CHOICES, read_only=True)
+    data = AnalyticsRowSerializer(many=True, read_only=True)

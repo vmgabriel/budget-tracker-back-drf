@@ -50,6 +50,8 @@ each introduced as a new bounded context inside this monolith.
 - Transaction types: `income`, `expense`, `investment`, and `savings`.
 - Owner-scoped funding accounts (`credit_card`, `debit`, `cash`, `savings`) that
   transactions can be linked to, so spending can be grouped per funding source.
+- Bounded, chart-ready transaction analytics: totals per period and type, or
+  expense totals per category, over at most 366 days.
 - Dashboard totals for income and expenses; investment and savings records are
   retained but are not counted as income or expense.
 - Daily, ISO-week (Monday–Sunday), and calendar-month summaries.
@@ -480,6 +482,7 @@ be no larger than `9999999999.99`. Dates cannot be in the future.
 | `GET` | `/api/v1/transactions/accounts/` | List the current user's active funding accounts |
 | `POST` | `/api/v1/transactions/accounts/` | Create a funding account |
 | `GET` | `/api/v1/transactions/accounts/{id}/` | Retrieve an owned funding account |
+| `GET` | `/api/v1/transactions/analytics/` | Bounded, chart-ready aggregates |
 
 ### Create
 
@@ -554,6 +557,65 @@ belongs to another user (or does not exist) is reported as `404`, and sending
 `null` in a patch is rejected: this phase links and re-links accounts, it does
 not detach them. Deleting an account keeps its transactions and clears the
 link (`SET_NULL`).
+
+### Analytics
+
+`GET /api/v1/transactions/analytics/` returns flat rows ready for a bar or pie
+chart. It requires `start_date`, `end_date`, and `group_by`; `period` defaults
+to `monthly`. Ranges may span at most 366 days (`end_date - start_date <= 366`),
+which keeps the query bounded.
+
+Aggregate by transaction type to feed a bar chart (one row per period):
+
+```bash
+curl -G http://127.0.0.1:8000/api/v1/transactions/analytics/ \
+  -H 'Authorization: Bearer <access-token>' \
+  -d start_date=2025-01-01 -d end_date=2025-02-28 \
+  -d group_by=type -d period=weekly
+```
+
+```json
+{
+  "period": "weekly",
+  "group_by": "type",
+  "data": [
+    {
+      "label": "2025-W02",
+      "income": "0.00",
+      "expense": "30.00",
+      "investment": "0.00",
+      "savings": "0.00"
+    }
+  ]
+}
+```
+
+Aggregate by category to feed an expense pie chart (one row per category,
+largest first):
+
+```bash
+curl -G http://127.0.0.1:8000/api/v1/transactions/analytics/ \
+  -H 'Authorization: Bearer <access-token>' \
+  -d start_date=2025-01-01 -d end_date=2025-02-28 -d group_by=category
+```
+
+```json
+{
+  "period": "monthly",
+  "group_by": "category",
+  "data": [
+    {"label": "Rent", "total": "800.00"},
+    {"label": "Food", "total": "30.00"}
+  ]
+}
+```
+
+Both shapes use string decimals so clients never round binary floats. Bucket
+labels are `YYYY-MM-DD` (daily), ISO `YYYY-Www` (weekly, Monday start), and
+`YYYY-MM` (monthly). Only periods with at least one matching transaction are
+returned, and every type row carries all four series (zero-filled). The
+category breakdown covers expenses only; income, investment, and savings
+categories are excluded by design.
 
 ## Dashboard
 
